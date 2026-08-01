@@ -12,5 +12,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: 0.12.1
+      - name: Install Qt runtime dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libegl1
       - run: uv python install 3.12
       - run: make ci
