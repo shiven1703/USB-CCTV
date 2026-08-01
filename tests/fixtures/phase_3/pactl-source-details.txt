@@ -1,0 +1,9 @@
+Source #59
+	State: SUSPENDED
+	Name: alsa_input.internal_analog_stereo
+	Description: Built-in Audio Analog Stereo
+
+Source #165
+	State: SUSPENDED
+	Name: alsa_input.usb_camera_2k.mono-fallback
+	Description: USB 2.0 Camera 2K Mono

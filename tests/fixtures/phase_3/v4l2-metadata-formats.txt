@@ -1,0 +1,2 @@
+ioctl: VIDIOC_ENUM_FMT
+	Type: Metadata Capture

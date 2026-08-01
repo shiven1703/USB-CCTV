@@ -45,9 +45,16 @@ def test_normal_cli_mode_starts_gui(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_bootstrap_starts_presentation_application(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(bootstrap, "run_application", lambda: 0)
+    received_factory: list[object] = []
+
+    def fake_run_application(factory: object) -> int:
+        received_factory.append(factory)
+        return 0
+
+    monkeypatch.setattr(bootstrap, "run_application", fake_run_application)
 
     assert bootstrap.run_gui() == 0
+    assert received_factory
 
 
 def test_qt_application_starts_window(monkeypatch: pytest.MonkeyPatch) -> None:

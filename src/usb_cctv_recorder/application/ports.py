@@ -8,16 +8,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
+from usb_cctv_recorder.application.dto import AudioSource, VideoDevice
 from usb_cctv_recorder.domain.entities import ArchiveJob, ComponentHealth, RecordingSession, Segment
 from usb_cctv_recorder.domain.value_objects import MonotonicDuration, SessionId, UtcTimestamp
 
 
 class VideoDevicePort(Protocol):
-    def list_video_devices(self) -> Sequence[str]: ...
+    def list_video_devices(self) -> Sequence[VideoDevice]: ...
 
 
 class AudioDevicePort(Protocol):
-    def list_audio_devices(self) -> Sequence[str]: ...
+    def list_audio_devices(self) -> Sequence[AudioSource]: ...
 
 
 class MediaProcessPort(Protocol):

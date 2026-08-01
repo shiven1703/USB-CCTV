@@ -14,7 +14,7 @@ typecheck:
 	uv run mypy
 
 test:
-	QT_QPA_PLATFORM=offscreen uv run pytest tests/unit
+	QT_QPA_PLATFORM=offscreen uv run pytest tests/unit tests/contract
 
 test-integration:
 	# Phase 1 has no integration tests; preserve all failures except pytest's empty-suite status.
