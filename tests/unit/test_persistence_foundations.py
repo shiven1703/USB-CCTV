@@ -16,7 +16,11 @@ from usb_cctv_recorder.infrastructure.persistence.event_journal import (
     JournalEvent,
     JsonlEventJournal,
 )
-from usb_cctv_recorder.infrastructure.persistence.manifest import ManifestStore, SessionManifest
+from usb_cctv_recorder.infrastructure.persistence.manifest import (
+    ManifestSegment,
+    ManifestStore,
+    SessionManifest,
+)
 from usb_cctv_recorder.infrastructure.persistence.migrations.versions import Migration
 from usb_cctv_recorder.infrastructure.persistence.sqlite import MigrationError, SQLiteCatalogue
 from usb_cctv_recorder.infrastructure.storage.atomic_files import (
@@ -101,6 +105,16 @@ def test_manifest_round_trip_and_atomic_store(tmp_path: Path) -> None:
         SessionManifest.from_json("{}")
     with pytest.raises(ValueError, match="unsupported"):
         SessionManifest(SessionId.new(), SessionState.IDLE, NOW, NOW, schema_version=2)
+    segment = ManifestSegment("segment-a", "segment-000000.mkv", 1.5, "a" * 64)
+    assert ManifestSegment.from_dict(segment.to_dict()) == segment
+    with pytest.raises(ValueError, match="object"):
+        ManifestSegment.from_dict("invalid")
+    with pytest.raises(ValueError, match="invalid session manifest"):
+        SessionManifest.from_json(
+            '{"schema_version":1,"session_id":"123e4567-e89b-12d3-a456-426614174000",'
+            '"state":"idle","created_at":"2026-08-01T12:00:00+00:00",'
+            '"updated_at":"2026-08-01T12:00:00+00:00","stop_reason":5}'
+        )
 
 
 def test_event_journal_only_appends_and_round_trips(tmp_path: Path) -> None:

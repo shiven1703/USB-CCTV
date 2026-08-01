@@ -88,3 +88,26 @@ def test_worker_cli_mode_exits_cleanly() -> None:
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_development_cli_runs_a_synthetic_recording(tmp_path: Path) -> None:
+    assert (
+        __main__.main(
+            [
+                "--record",
+                "--media-root",
+                str(tmp_path),
+                "--synthetic-duration-seconds",
+                "0.3",
+            ]
+        )
+        == 0
+    )
+    assert list(tmp_path.glob("originals/*/session-*/segment-*.mkv"))
+
+
+def test_development_cli_rejects_missing_root_and_bad_segment_duration() -> None:
+    with pytest.raises(ValueError, match="media-root"):
+        __main__.main(["--record"])
+    with pytest.raises(ValueError, match="segment-minutes"):
+        __main__.main(["--record", "--media-root", "/tmp", "--segment-minutes", "0"])
