@@ -8,3 +8,37 @@ __pycache__/
 .venv/
 build/
 dist/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.*.sample
+credentials*.json
+secrets.*
+!credentials.example.json
+!secrets.example.*
+*service-account*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.kdbx
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# Local recordings and recorder state
+recordings/
+captures/
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.sqlite
+*.sqlite3
+*.db
