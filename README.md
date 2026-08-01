@@ -1,14 +1,19 @@
 # USB CCTV Recorder
 
 USB CCTV Recorder is a local desktop recorder for one USB camera and microphone on
-Ubuntu/KDE. It is being implemented in phases. Phase 4 adds a foreground, headless
-development recorder that builds a validated FFmpeg command, writes segmented MKV files,
-verifies each completed file with FFprobe, and records a durable manifest and event trail.
+Ubuntu/KDE. It is being implemented in phases. Phase 5 adds an on-demand systemd user
+worker boundary: a current-user-only Unix socket under `$XDG_RUNTIME_DIR/usb-cctv-recorder/`,
+versioned closed commands (`status`, `start`, `stop`, `retry`, and `force_stop`), and a GUI
+status reconnect that never owns or stops FFmpeg.
 
-The setup GUI still does not own recording. Background systemd operation, GUI controls,
-IPC, power inhibition, recovery, library, archive, and retention work remain deliberately
-deferred to later phases. Phase 4 uses the runtime-proven `libx264` software fallback;
-hardware and HEVC encoder selection are not implemented.
+The setup GUI still does not own recording. The static service is installed by the later
+packaging phase; its configured `Restart=on-failure` policy has a three-starts-per-minute
+limit, while a safe stop completes the recording without entering a worker failure state.
+The setup page writes validated capture settings to a private XDG configuration file that the
+worker reads before it starts; IPC never accepts device paths or FFmpeg arguments. Power
+inhibition, recovery, library, archive, retention, and package installation remain deferred.
+Phase 4 uses the runtime-proven `libx264` software fallback; hardware and HEVC encoder
+selection are not implemented.
 
 ## Development
 

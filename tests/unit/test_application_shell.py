@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -79,15 +77,10 @@ def test_qt_application_starts_window(monkeypatch: pytest.MonkeyPatch) -> None:
     assert app.run_application() == 0
 
 
-def test_worker_cli_mode_exits_cleanly() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "usb_cctv_recorder", "--worker"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+def test_worker_cli_mode_starts_the_on_demand_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(__main__, "run_worker", lambda: 0)
 
-    assert result.returncode == 0, result.stderr
+    assert __main__.main(["--worker"]) == 0
 
 
 def test_development_cli_runs_a_synthetic_recording(tmp_path: Path) -> None:

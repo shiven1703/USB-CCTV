@@ -145,6 +145,13 @@ class HeadlessRecordingController:
         self._append_event("session_stopped", {"returncode": result.returncode})
         return result
 
+    def force_stop(self) -> ProcessResult:
+        """Last-resort process termination; callers must log it as abnormal."""
+        self._require_started()
+        result = self._process.force_stop()
+        self._fail("FFmpeg was explicitly force-stopped")
+        return result
+
     def run_until_complete(self, poll_seconds: float = 0.1) -> ProcessResult:
         if poll_seconds <= 0:
             raise ValueError("poll interval must be positive")

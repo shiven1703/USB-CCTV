@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
 
 APPLICATION_DIRECTORY_NAME = "usb-cctv-recorder"
 
@@ -44,3 +47,90 @@ class XdgPaths:
                 path.chmod(0o700)
         finally:
             os.umask(previous_umask)
+
+
+class WorkerConfigurationStore:
+    """Private JSON persistence for worker-owned capture settings, never IPC input."""
+
+    _FILENAME = "worker-recording.json"
+
+    def __init__(self, paths: XdgPaths) -> None:
+        self._paths = paths
+
+    def save(self, configuration: WorkerRecordingConfiguration) -> None:
+        self._paths.create_private_directories()
+        destination = self._paths.config / self._FILENAME
+        temporary = destination.with_suffix(".tmp")
+        content = json.dumps(
+            {
+                "media_root": str(configuration.media_root),
+                "camera_identity": configuration.camera_identity,
+                "microphone_source": configuration.microphone_source,
+                "width": configuration.width,
+                "height": configuration.height,
+                "input_frame_rate": configuration.input_frame_rate,
+                "output_frame_rate": configuration.output_frame_rate,
+                "segment_duration_minutes": configuration.segment_duration_minutes,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        descriptor = os.open(temporary, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+        try:
+            os.write(descriptor, content)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary, destination)
+        destination.chmod(0o600)
+
+    def load(self) -> WorkerRecordingConfiguration | None:
+        path = self._paths.config / self._FILENAME
+        try:
+            content = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        status = path.stat()
+        if status.st_uid != os.getuid() or status.st_mode & 0o077:
+            raise ValueError("worker recording configuration is not private")
+        try:
+            fields = json.loads(content)
+        except json.JSONDecodeError as error:
+            raise ValueError("worker recording configuration is invalid JSON") from error
+        expected = {
+            "media_root",
+            "camera_identity",
+            "microphone_source",
+            "width",
+            "height",
+            "input_frame_rate",
+            "output_frame_rate",
+            "segment_duration_minutes",
+        }
+        if not isinstance(fields, dict) or set(fields) != expected:
+            raise ValueError("worker recording configuration fields are invalid")
+        string_fields = ("media_root", "camera_identity", "microphone_source")
+        integer_fields = ("width", "height", "segment_duration_minutes")
+        float_fields = ("input_frame_rate", "output_frame_rate")
+        if (
+            not all(isinstance(fields[name], str) for name in string_fields)
+            or not all(
+                isinstance(fields[name], int) and not isinstance(fields[name], bool)
+                for name in integer_fields
+            )
+            or not all(
+                isinstance(fields[name], int | float) and not isinstance(fields[name], bool)
+                for name in float_fields
+            )
+        ):
+            raise ValueError("worker recording configuration value types are invalid")
+        return WorkerRecordingConfiguration(
+            media_root=Path(fields["media_root"]),
+            camera_identity=fields["camera_identity"],
+            microphone_source=fields["microphone_source"],
+            width=fields["width"],
+            height=fields["height"],
+            input_frame_rate=float(fields["input_frame_rate"]),
+            output_frame_rate=float(fields["output_frame_rate"]),
+            segment_duration_minutes=fields["segment_duration_minutes"],
+        )

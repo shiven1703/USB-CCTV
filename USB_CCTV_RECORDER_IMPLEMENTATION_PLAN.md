@@ -14,8 +14,8 @@
 
 ## Current implementation state — 2026-08-01
 
-**Current phase:** Phase 5 — Systemd user service and GUI/worker IPC (not started)
-**Overall state:** **PHASE 4 COMPLETE AND APPROVED; PHASE 5 MAY BEGIN ONLY FROM A COMMITTED, CLEAN PHASE 4 BASELINE**
+**Current phase:** Phase 5 — Systemd user service and GUI/worker IPC (manual acceptance pending)
+**Overall state:** **PHASE 5 IMPLEMENTATION IS COMMITTED; DO NOT BEGIN PHASE 6 UNTIL THE REQUIRED INSTALLED-UNIT AND REAL-HARDWARE MANUAL ACCEPTANCE RESULTS ARE RECORDED AND APPROVED**
 
 **Current storage requirement:** The complete application-managed footprint must fit within a hard 90 GB decimal ceiling. On the currently probed system drive, the initial effective cap is expected to be approximately 76.2 GB after default safety reserves.
 

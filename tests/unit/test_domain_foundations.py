@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
-from usb_cctv_recorder.application.configuration import RecorderConfiguration
+from usb_cctv_recorder.application.configuration import (
+    RecorderConfiguration,
+    WorkerRecordingConfiguration,
+)
 from usb_cctv_recorder.application.ports import WallAndMonotonicClock, session_identifier
 from usb_cctv_recorder.domain.entities import ArchiveJob, ComponentHealth, RecordingSession, Segment
 from usb_cctv_recorder.domain.errors import DomainError, InvalidStateTransition
@@ -129,6 +133,24 @@ def test_configuration_enforces_phase_two_storage_limits(tmp_path: pytest.TempPa
         RecorderConfiguration(media_root=media_root, operating_system_reserve_bytes=-1)
     with pytest.raises(ValueError, match="emergency"):
         RecorderConfiguration(media_root=media_root, emergency_finalization_reserve_bytes=-1)
+
+
+@pytest.mark.parametrize(
+    "values, message",
+    [
+        ((Path("relative"), "/dev/v4l/by-id/camera", "mic", 1, 1, 1, 15, 1), "absolute"),
+        ((Path("/tmp"), "/dev/video2", "mic", 1, 1, 1, 15, 1), "persistent"),
+        ((Path("/tmp"), "/dev/v4l/by-id/camera", "default", 1, 1, 1, 15, 1), "explicit"),
+        ((Path("/tmp"), "/dev/v4l/by-id/camera", "mic", 0, 1, 1, 15, 1), "positive"),
+        ((Path("/tmp"), "/dev/v4l/by-id/camera", "mic", 1, 1, 1, 30, 1), "12 or 15"),
+        ((Path("/tmp"), "/dev/v4l/by-id/camera", "mic", 1, 1, 1, 15, 0), "segment"),
+    ],
+)
+def test_worker_configuration_rejects_unsafe_values(
+    values: tuple[Path, str, str, int, int, int, int, int], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        WorkerRecordingConfiguration(*values)
 
 
 def test_component_health_requires_a_named_component() -> None:

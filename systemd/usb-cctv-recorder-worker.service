@@ -1,0 +1,17 @@
+[Unit]
+Description=USB CCTV Recorder worker
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/usb-cctv-recorder --worker
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=usb-cctv-recorder
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

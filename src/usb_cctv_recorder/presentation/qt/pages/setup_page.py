@@ -21,7 +21,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from usb_cctv_recorder.application.configuration import RecorderConfiguration
+from usb_cctv_recorder.application.configuration import (
+    RecorderConfiguration,
+    WorkerRecordingConfiguration,
+)
 from usb_cctv_recorder.application.dto import (
     AudioSource,
     CaptureMode,
@@ -29,6 +32,7 @@ from usb_cctv_recorder.application.dto import (
     PreflightErrorCode,
     VideoDevice,
 )
+from usb_cctv_recorder.application.ports import WorkerConfigurationPort
 from usb_cctv_recorder.application.preflight import PreflightService, SetupSelection
 
 from ..preview import PreviewCallback, QtMultimediaPreview
@@ -50,10 +54,12 @@ class SetupPage(QWidget):
         service: PreflightService | None = None,
         settings: QSettings | None = None,
         preview_factory: Callable[[QVideoWidget], PreviewTestPort] = QtMultimediaPreview,
+        worker_configuration: WorkerConfigurationPort | None = None,
     ) -> None:
         super().__init__()
         self._service = service
         self._settings = settings or QSettings("USB CCTV Recorder", "USB CCTV Recorder")
+        self._worker_configuration = worker_configuration
         self._discovery = DeviceDiscovery((), ())
         self._preview_succeeded = False
         self._preview_failed = False
@@ -154,6 +160,29 @@ class SetupPage(QWidget):
         self._settings.setValue("microphone_stable_id", microphone.stable_id if microphone else "")
         self._settings.setValue("segment_duration", self.segment_duration.value())
         self._settings.setValue("output_directory", self.output_directory.text())
+        mode = self._selected_mode()
+        if (
+            self._worker_configuration is None
+            or camera is None
+            or microphone is None
+            or mode is None
+        ):
+            return
+        try:
+            self._worker_configuration.save(
+                WorkerRecordingConfiguration(
+                    media_root=Path(self.output_directory.text()).expanduser(),
+                    camera_identity=camera.stable_id,
+                    microphone_source=microphone.stable_id,
+                    width=mode.width,
+                    height=mode.height,
+                    input_frame_rate=mode.frames_per_second,
+                    output_frame_rate=15,
+                    segment_duration_minutes=self.segment_duration.value(),
+                )
+            )
+        except (OSError, ValueError) as error:
+            self.preflight_status.setText(f"Unable to save worker recording settings: {error}")
 
     def _update_preflight(self) -> None:
         if self._service is None:

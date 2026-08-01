@@ -31,3 +31,31 @@ class RecorderConfiguration:
             raise ValueError("operating-system reserve cannot be negative")
         if self.emergency_finalization_reserve_bytes < 0:
             raise ValueError("emergency finalization reserve cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerRecordingConfiguration:
+    """Validated capture settings persisted for the independent service worker."""
+
+    media_root: Path
+    camera_identity: str
+    microphone_source: str
+    width: int
+    height: int
+    input_frame_rate: float
+    output_frame_rate: float
+    segment_duration_minutes: int
+
+    def __post_init__(self) -> None:
+        if not self.media_root.is_absolute():
+            raise ValueError("media root must be absolute")
+        if not self.camera_identity.startswith("/dev/v4l/by-id/"):
+            raise ValueError("camera identity must be a persistent /dev/v4l/by-id path")
+        if not self.microphone_source or self.microphone_source in {"default", "@DEFAULT_SOURCE@"}:
+            raise ValueError("microphone source must be explicit")
+        if self.width <= 0 or self.height <= 0 or self.input_frame_rate <= 0:
+            raise ValueError("capture dimensions and input frame rate must be positive")
+        if self.output_frame_rate not in {12, 15}:
+            raise ValueError("output frame rate must be 12 or 15")
+        if not 1 <= self.segment_duration_minutes <= 360:
+            raise ValueError("segment duration must be between 1 and 360 minutes")

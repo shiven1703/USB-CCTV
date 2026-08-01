@@ -9,9 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
 from usb_cctv_recorder.domain.states import SessionState
 from usb_cctv_recorder.domain.value_objects import SessionId, UtcTimestamp
-from usb_cctv_recorder.infrastructure.configuration import XdgPaths
+from usb_cctv_recorder.infrastructure.configuration import WorkerConfigurationStore, XdgPaths
 from usb_cctv_recorder.infrastructure.persistence.event_journal import (
     JournalEvent,
     JsonlEventJournal,
@@ -223,3 +224,38 @@ def test_xdg_paths_resolve_and_create_private_directories(tmp_path: Path) -> Non
     assert os.stat(paths.config).st_mode & 0o777 == 0o700
     with pytest.raises(ValueError, match="XDG_RUNTIME_DIR"):
         XdgPaths.resolve({"HOME": str(tmp_path)})
+
+
+def test_worker_configuration_is_private_validated_and_round_trips(tmp_path: Path) -> None:
+    paths = XdgPaths.resolve(
+        {
+            "HOME": str(tmp_path / "home"),
+            "XDG_CONFIG_HOME": str(tmp_path / "config"),
+            "XDG_STATE_HOME": str(tmp_path / "state"),
+            "XDG_CACHE_HOME": str(tmp_path / "cache"),
+            "XDG_RUNTIME_DIR": str(tmp_path / "runtime"),
+        }
+    )
+    store = WorkerConfigurationStore(paths)
+    assert store.load() is None
+    configuration = WorkerRecordingConfiguration(
+        tmp_path / "media",
+        "/dev/v4l/by-id/camera",
+        "alsa_input.camera",
+        2560,
+        1440,
+        30,
+        15,
+        60,
+    )
+    store.save(configuration)
+    saved = paths.config / "worker-recording.json"
+    assert store.load() == configuration
+    assert saved.stat().st_mode & 0o777 == 0o600
+    saved.chmod(0o644)
+    with pytest.raises(ValueError, match="private"):
+        store.load()
+    saved.chmod(0o600)
+    saved.write_text("{}")
+    with pytest.raises(ValueError, match="fields"):
+        store.load()

@@ -8,7 +8,10 @@ import pytest
 from PySide6.QtCore import QSettings
 from PySide6.QtMultimediaWidgets import QVideoWidget
 
-from usb_cctv_recorder.application.configuration import RecorderConfiguration
+from usb_cctv_recorder.application.configuration import (
+    RecorderConfiguration,
+    WorkerRecordingConfiguration,
+)
 from usb_cctv_recorder.application.dto import (
     AudioSource,
     CaptureMode,
@@ -124,6 +127,30 @@ def test_selection_persists_by_stable_identity(qtbot: pytest.QtBot, tmp_path: Pa
     assert restored.camera_selector.currentData().stable_id == "/dev/v4l/by-id/camera"
     assert restored.microphone_selector.currentData().stable_id == "alsa_input.camera"
     assert restored.segment_duration.value() == 15
+
+
+def test_selection_persists_worker_readable_capture_configuration(
+    qtbot: pytest.QtBot, tmp_path: Path
+) -> None:
+    saved: list[WorkerRecordingConfiguration] = []
+
+    class WorkerStore:
+        def save(self, configuration: WorkerRecordingConfiguration) -> None:
+            saved.append(configuration)
+
+    page, _, settings = setup_page(tmp_path)
+    page = SetupPage(
+        PreflightService(StaticDiscovery(fixture_discovery()), WritableStorage()),
+        settings,
+        worker_configuration=WorkerStore(),
+    )
+    qtbot.addWidget(page)
+    page.output_directory.setText(str(tmp_path))
+    page.set_discovery(fixture_discovery())
+    page._selection_changed()
+    assert saved[-1].camera_identity == "/dev/v4l/by-id/camera"
+    assert saved[-1].microphone_source == "alsa_input.camera"
+    assert saved[-1].media_root == tmp_path
 
 
 def test_discovery_error_is_visible_and_prevents_start(qtbot: pytest.QtBot, tmp_path: Path) -> None:

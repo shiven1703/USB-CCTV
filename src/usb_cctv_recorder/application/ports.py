@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
+from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
 from usb_cctv_recorder.application.dto import AudioSource, VideoDevice
 from usb_cctv_recorder.domain.entities import ArchiveJob, ComponentHealth, RecordingSession, Segment
 from usb_cctv_recorder.domain.value_objects import MonotonicDuration, SessionId, UtcTimestamp
@@ -61,6 +62,10 @@ class SystemServicePort(Protocol):
     def start_worker(self) -> None: ...
 
     def stop_worker(self) -> None: ...
+
+
+class WorkerConfigurationPort(Protocol):
+    def save(self, configuration: WorkerRecordingConfiguration) -> None: ...
 
 
 class EventJournalPort(Protocol):

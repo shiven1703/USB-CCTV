@@ -132,6 +132,16 @@ class FfmpegProcess:
         self._join_readers()
         return self._result(process.returncode, timed_out=False)
 
+    def force_stop(self) -> ProcessResult:
+        """Kill the process group immediately for the explicit emergency path only."""
+        process = self._require_process()
+        if process.poll() is None:
+            self._forced_kill = True
+            self._signal_group(signal.SIGKILL)
+        process.wait()
+        self._join_readers()
+        return self._result(process.returncode, timed_out=False)
+
     def _read_stdout(self, stream: BinaryIO) -> None:
         for raw_line in stream:
             self._stdout.append(raw_line)
