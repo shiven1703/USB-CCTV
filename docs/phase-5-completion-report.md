@@ -28,15 +28,15 @@
 - `systemd-analyze verify systemd/usb-cctv-recorder-worker.service` parsed the unit. It correctly reported that `/usr/bin/usb-cctv-recorder` is not executable in the development checkout; the executable is installed only by the deferred packaging phase.
 - `systemd-run --user --wait --collect /usr/bin/true` passed in the target desktop user manager.
 - Transient user-service recovery was exercised from this checkout: the worker returned `idle`, was killed with `SIGKILL`, restarted through `Restart=on-failure`, advanced `NRestarts` from 0 to 1, and returned `idle` through a new socket connection. The temporary unit was then stopped.
+- Manual real-hardware acceptance passed: the configured camera and microphone started recording, a new client reconnected with `recording_av`, safe stop reached `completed`, and `NRestarts` remained unchanged. The user also closed and reopened the GUI during recording and confirmed it displayed `recording_av`.
 - `make ci` passed: Ruff format/lint, mypy, 116 tests across unit/contract/integration/fault suites at 90.26% coverage, dependency audit, source/wheel build, and wheel verification.
 
 ## Deferred limitations
 
-- The static unit is not installed by this source checkout; package installation belongs to a later packaging phase.
-- The static installed unit cannot be exercised before the deferred package install, so [manual installed-unit acceptance](phase-5-manual-acceptance.md) remains required. Synthetic socket integration does not require the physical webcam.
+- The static unit is not installed by this source checkout; package-install lifecycle validation belongs to the later packaging phase. Synthetic socket integration does not require the physical webcam.
 - Power inhibition, systemd SIGTERM finalization, hotplug/watchdog recovery, degraded capture, retention, archive, and library work remain deferred to their specified later phases.
 
 ## Stop gate
 
-Phase 5 implementation is committed, but its acceptance gate remains open. Record the required
-installed-unit and real-hardware manual results before approval and before starting Phase 6.
+Phase 5 acceptance criteria passed and user approval was recorded. Phase 6 may begin only from
+this clean committed baseline.

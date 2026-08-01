@@ -14,12 +14,12 @@
 
 ## Current implementation state — 2026-08-01
 
-**Current phase:** Phase 5 — Systemd user service and GUI/worker IPC (manual acceptance pending)
-**Overall state:** **PHASE 5 IMPLEMENTATION IS COMMITTED; DO NOT BEGIN PHASE 6 UNTIL THE REQUIRED INSTALLED-UNIT AND REAL-HARDWARE MANUAL ACCEPTANCE RESULTS ARE RECORDED AND APPROVED**
+**Current phase:** Phase 6 — Power inhibition and shutdown finalization (not started)
+**Overall state:** **PHASE 5 COMPLETE AND APPROVED; PHASE 6 MAY BEGIN ONLY FROM THE COMMITTED, CLEAN PHASE 5 BASELINE**
 
 **Current storage requirement:** The complete application-managed footprint must fit within a hard 90 GB decimal ceiling. On the currently probed system drive, the initial effective cap is expected to be approximately 76.2 GB after default safety reserves.
 
-Phase 0 implementation, operational checks, and user approval are complete in commit `932a042`. Phase 1 scaffolding, quality gates, CI, tests, and ADRs are complete in commit `27286ec` and approved by the user. Phase 2 domain, persistence, and storage foundations are complete and user-approved; its completion report is `docs/phase-2-completion-report.md`. Phase 3 device discovery, capability probing, and preflight UI are complete and user-approved; its completion report is `docs/phase-3-completion-report.md`. The target KDE session confirmed the Phase 3 preflight test. Phase 4 minimal headless recording, segmentation, and verification are complete and user-approved; its completion report is `docs/phase-4-completion-report.md`. Commit the approved Phase 4 work and begin Phase 5 only from that clean committed baseline.
+Phase 0 implementation, operational checks, and user approval are complete in commit `932a042`. Phase 1 scaffolding, quality gates, CI, tests, and ADRs are complete in commit `27286ec` and approved by the user. Phase 2 domain, persistence, and storage foundations are complete and user-approved; its completion report is `docs/phase-2-completion-report.md`. Phase 3 device discovery, capability probing, and preflight UI are complete and user-approved; its completion report is `docs/phase-3-completion-report.md`. The target KDE session confirmed the Phase 3 preflight test. Phase 4 minimal headless recording, segmentation, and verification are complete and user-approved; its completion report is `docs/phase-4-completion-report.md`. Phase 5 systemd user-service ownership and GUI/worker IPC are complete and user-approved; its completion report is `docs/phase-5-completion-report.md`. Begin Phase 6 only from that clean committed baseline.
 
 ### Confirmed target environment
 
