@@ -1,0 +1,20 @@
+[Unit]
+Description=USB CCTV Recorder worker
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/usb-cctv-recorder --worker
+Restart=on-failure
+RestartSec=5
+# The worker uses 10 seconds for FFmpeg graceful stop, then verifies and persists
+# the active segment. logind's shutdown delay inhibitor is released on completion.
+TimeoutStopSec=40s
+RuntimeDirectory=usb-cctv-recorder
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target

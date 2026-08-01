@@ -1,0 +1,5 @@
+USB 2.0 Camera 2K:
+	/dev/video2
+
+USB 2.0 Camera 2K:
+	/dev/video4

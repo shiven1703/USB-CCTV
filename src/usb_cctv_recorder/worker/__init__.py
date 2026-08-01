@@ -1,0 +1,1 @@
+"""Headless worker entrypoint package."""
