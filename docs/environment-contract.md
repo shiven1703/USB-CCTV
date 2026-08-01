@@ -1,6 +1,6 @@
 # Environment contract
 
-This Phase 0 contract records the target KDE-session probe from 2026-08-01. It is not approval to begin Phase 1 until the remaining operational checks and user approval are recorded.
+This Phase 0 contract records the target KDE-session probe from 2026-08-01. Its operational checks and user approval are complete in commit `932a042`; Phase 1 is complete and approved in commit `27286ec`.
 
 ## Supported baseline decision
 

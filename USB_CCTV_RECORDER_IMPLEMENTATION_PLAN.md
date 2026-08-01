@@ -14,12 +14,12 @@
 
 ## Current implementation state — 2026-08-01
 
-**Current phase:** Phase 1 — Project scaffolding and quality gates (not started)
-**Overall state:** **PHASE 0 COMPLETE AND APPROVED; PHASE 1 AWAITS THE REQUIRED COMMIT**
+**Current phase:** Phase 2 — Domain model, state machines, persistence foundations (not started)
+**Overall state:** **PHASE 1 COMPLETE AND APPROVED; PHASE 2 MAY BEGIN**
 
 **Current storage requirement:** The complete application-managed footprint must fit within a hard 90 GB decimal ceiling. On the currently probed system drive, the initial effective cap is expected to be approximately 76.2 GB after default safety reserves.
 
-Phase 0 implementation, operational checks, and user approval are complete. The target KDE session confirms the webcam, microphone, FFmpeg stack, and filesystem. Phase 1 may begin only after the approved Phase 0 changes, including this contract, are committed as required by its entry conditions.
+Phase 0 implementation, operational checks, and user approval are complete in commit `932a042`. Phase 1 scaffolding, quality gates, CI, tests, and ADRs are complete in commit `27286ec` and approved by the user. The target KDE session confirms the webcam, microphone, FFmpeg stack, and filesystem. Phase 2 may begin only from this committed Phase 1 baseline.
 
 ### Confirmed target environment
 
