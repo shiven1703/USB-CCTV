@@ -192,9 +192,12 @@ class _Controller:
             raise RecordingFailure("start failure")
         return StartedRecording(SessionId.new(), Path("/tmp/session"), ("ffmpeg",))
 
-    def stop(self) -> object:
+    def stop(self, _timeout_seconds: float = 10, *, reason: str = "user_requested") -> object:
         self.stop_count += 1
         return object()
+
+    def append_event(self, _event_type: str, _payload: dict[str, object]) -> None:
+        return None
 
     def force_stop(self) -> object:
         self.force_stop_count += 1

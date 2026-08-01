@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 
 from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
-from usb_cctv_recorder.application.dto import AudioSource, VideoDevice
+from usb_cctv_recorder.application.dto import AudioSource, PowerStatus, VideoDevice
 from usb_cctv_recorder.domain.entities import ArchiveJob, ComponentHealth, RecordingSession, Segment
 from usb_cctv_recorder.domain.value_objects import MonotonicDuration, SessionId, UtcTimestamp
 
@@ -30,10 +30,16 @@ class MediaProcessPort(Protocol):
     def is_running(self) -> bool: ...
 
 
-class PowerPort(Protocol):
-    def inhibit_sleep(self) -> None: ...
+class PowerInhibitorPort(Protocol):
+    def acquire(self, *, block_lid_close: bool) -> None: ...
 
-    def release_inhibition(self) -> None: ...
+    def release(self) -> None: ...
+
+    def protection_active(self) -> bool: ...
+
+
+class PowerStatusPort(Protocol):
+    def status(self) -> PowerStatus: ...
 
 
 class PersistencePort(Protocol):

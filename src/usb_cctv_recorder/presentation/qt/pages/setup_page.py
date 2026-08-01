@@ -9,6 +9,7 @@ from typing import Protocol
 from PySide6.QtCore import QSettings
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -71,6 +72,14 @@ class SetupPage(QWidget):
         self.segment_duration = QSpinBox()
         self.segment_duration.setRange(1, 360)
         self.segment_duration.setValue(int(str(self._settings.value("segment_duration", 60))))
+        self.prevent_suspend = QCheckBox("Prevent suspend and hibernation while recording")
+        self.prevent_suspend.setChecked(
+            str(self._settings.value("prevent_suspend", "true")).lower() != "false"
+        )
+        self.block_lid_close = QCheckBox("Also prevent lid-close suspend")
+        self.block_lid_close.setChecked(
+            str(self._settings.value("block_lid_close", "false")).lower() == "true"
+        )
         self.output_directory = QLineEdit(
             str(self._settings.value("output_directory", str(Path.home() / "Videos")))
         )
@@ -95,6 +104,8 @@ class SetupPage(QWidget):
         form.addRow("Microphone", self.microphone_selector)
         form.addRow("Capture mode", self.mode_selector)
         form.addRow("Segment duration (minutes)", self.segment_duration)
+        form.addRow("Power protection", self.prevent_suspend)
+        form.addRow("Lid-close protection", self.block_lid_close)
         form.addRow("Recording directory", output_layout)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
@@ -109,6 +120,8 @@ class SetupPage(QWidget):
         self.microphone_selector.currentIndexChanged.connect(self._selection_changed)
         self.mode_selector.currentIndexChanged.connect(self._selection_changed)
         self.segment_duration.valueChanged.connect(self._selection_changed)
+        self.prevent_suspend.toggled.connect(self._power_protection_changed)
+        self.block_lid_close.toggled.connect(self._selection_changed)
         self.output_directory.editingFinished.connect(self._selection_changed)
 
     def set_discovery(self, discovery: DeviceDiscovery) -> None:
@@ -153,6 +166,12 @@ class SetupPage(QWidget):
         self._persist_selection()
         self._update_preflight()
 
+    def _power_protection_changed(self, enabled: bool) -> None:
+        self.block_lid_close.setEnabled(enabled)
+        if not enabled:
+            self.block_lid_close.setChecked(False)
+        self._selection_changed()
+
     def _persist_selection(self) -> None:
         camera = self._selected_camera()
         microphone = self._selected_microphone()
@@ -160,6 +179,8 @@ class SetupPage(QWidget):
         self._settings.setValue("microphone_stable_id", microphone.stable_id if microphone else "")
         self._settings.setValue("segment_duration", self.segment_duration.value())
         self._settings.setValue("output_directory", self.output_directory.text())
+        self._settings.setValue("prevent_suspend", self.prevent_suspend.isChecked())
+        self._settings.setValue("block_lid_close", self.block_lid_close.isChecked())
         mode = self._selected_mode()
         if (
             self._worker_configuration is None
@@ -179,6 +200,8 @@ class SetupPage(QWidget):
                     input_frame_rate=mode.frames_per_second,
                     output_frame_rate=15,
                     segment_duration_minutes=self.segment_duration.value(),
+                    prevent_suspend=self.prevent_suspend.isChecked(),
+                    block_lid_close=self.block_lid_close.isChecked(),
                 )
             )
         except (OSError, ValueError) as error:

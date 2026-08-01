@@ -120,16 +120,21 @@ class HeadlessRecordingController:
             raise RecordingFailure(self.manifest.failure_reason or "FFmpeg exited unexpectedly")
         return result
 
-    def stop(self, graceful_timeout_seconds: float = 10) -> ProcessResult:
+    def stop(
+        self,
+        graceful_timeout_seconds: float = 10,
+        *,
+        reason: str = "user_requested",
+    ) -> ProcessResult:
         self._require_started()
         if self._session is None:
             raise AssertionError("session unexpectedly absent")
         if self._session.state == SessionState.RECORDING_AV:
             self._move_session(SessionState.STOPPING)
-        self._append_event("stop_requested", {"reason": "user_requested"})
+        self._append_event("stop_requested", {"reason": reason})
         result = self._process.stop(graceful_timeout_seconds)
         self._move_session(SessionState.FINALIZING)
-        self._save_manifest(stop_reason="user_requested")
+        self._save_manifest(stop_reason=reason)
         try:
             self._finalize_closed_segments(include_active=True)
         except RecordingFailure:
@@ -141,9 +146,14 @@ class HeadlessRecordingController:
             self._fail(f"FFmpeg safe stop returned {result.returncode}")
             raise RecordingFailure(self.manifest.failure_reason or "FFmpeg safe stop failed")
         self._move_session(SessionState.COMPLETED)
-        self._save_manifest(stop_reason="user_requested")
-        self._append_event("session_stopped", {"returncode": result.returncode})
+        self._save_manifest(stop_reason=reason)
+        self._append_event("session_stopped", {"returncode": result.returncode, "reason": reason})
         return result
+
+    def append_event(self, event_type: str, payload: dict[str, object]) -> None:
+        """Persist worker lifecycle context without exposing journal ownership."""
+        self._require_started()
+        self._append_event(event_type, payload)
 
     def force_stop(self) -> ProcessResult:
         """Last-resort process termination; callers must log it as abnormal."""

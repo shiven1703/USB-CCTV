@@ -60,6 +60,9 @@ class Response:
     accepted: bool
     error_code: str | None = None
     session_id: str | None = None
+    power_protection: str = "inactive"
+    power_source: str = "unknown"
+    battery_percent: int | None = None
 
     @classmethod
     def parse(cls, value: object) -> Response:
@@ -74,6 +77,9 @@ class Response:
                 "accepted",
                 "error_code",
                 "session_id",
+                "power_protection",
+                "power_source",
+                "battery_percent",
             },
             "response",
         )
@@ -90,6 +96,14 @@ class Response:
         for name in ("error_code", "session_id"):
             if fields[name] is not None:
                 _string(fields[name], name)
+        for name in ("power_protection", "power_source"):
+            _string(fields[name], name)
+        if fields["battery_percent"] is not None and (
+            not isinstance(fields["battery_percent"], int)
+            or isinstance(fields["battery_percent"], bool)
+            or not 0 <= fields["battery_percent"] <= 100
+        ):
+            raise ProtocolError("battery_percent must be an integer from 0 to 100")
         return cls(
             command,
             command_id,
@@ -97,6 +111,9 @@ class Response:
             fields["accepted"],
             fields["error_code"],
             fields["session_id"],
+            fields["power_protection"],
+            fields["power_source"],
+            fields["battery_percent"],
         )
 
     def to_mapping(self) -> dict[str, object]:
@@ -108,6 +125,9 @@ class Response:
             "accepted": self.accepted,
             "error_code": self.error_code,
             "session_id": self.session_id,
+            "power_protection": self.power_protection,
+            "power_source": self.power_source,
+            "battery_percent": self.battery_percent,
         }
 
 

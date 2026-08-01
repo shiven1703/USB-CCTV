@@ -71,6 +71,8 @@ class WorkerConfigurationStore:
                 "input_frame_rate": configuration.input_frame_rate,
                 "output_frame_rate": configuration.output_frame_rate,
                 "segment_duration_minutes": configuration.segment_duration_minutes,
+                "prevent_suspend": configuration.prevent_suspend,
+                "block_lid_close": configuration.block_lid_close,
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -106,12 +108,15 @@ class WorkerConfigurationStore:
             "input_frame_rate",
             "output_frame_rate",
             "segment_duration_minutes",
+            "prevent_suspend",
+            "block_lid_close",
         }
         if not isinstance(fields, dict) or set(fields) != expected:
             raise ValueError("worker recording configuration fields are invalid")
         string_fields = ("media_root", "camera_identity", "microphone_source")
         integer_fields = ("width", "height", "segment_duration_minutes")
         float_fields = ("input_frame_rate", "output_frame_rate")
+        boolean_fields = ("prevent_suspend", "block_lid_close")
         if (
             not all(isinstance(fields[name], str) for name in string_fields)
             or not all(
@@ -122,6 +127,7 @@ class WorkerConfigurationStore:
                 isinstance(fields[name], int | float) and not isinstance(fields[name], bool)
                 for name in float_fields
             )
+            or not all(isinstance(fields[name], bool) for name in boolean_fields)
         ):
             raise ValueError("worker recording configuration value types are invalid")
         return WorkerRecordingConfiguration(
@@ -133,4 +139,6 @@ class WorkerConfigurationStore:
             input_frame_rate=float(fields["input_frame_rate"]),
             output_frame_rate=float(fields["output_frame_rate"]),
             segment_duration_minutes=fields["segment_duration_minutes"],
+            prevent_suspend=fields["prevent_suspend"],
+            block_lid_close=fields["block_lid_close"],
         )

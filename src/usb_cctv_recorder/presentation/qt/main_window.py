@@ -95,7 +95,15 @@ class MainWindow(QMainWindow):
     def _worker_status_completed(self, response: object) -> None:
         if isinstance(response, Response):
             session = f" session {response.session_id}" if response.session_id else ""
-            self.statusBar().showMessage(f"Worker status: {response.state}{session}")
+            battery = (
+                f", battery {response.battery_percent}%"
+                if response.battery_percent is not None
+                else ""
+            )
+            self.statusBar().showMessage(
+                f"Worker status: {response.state}{session}; power protection: "
+                f"{response.power_protection}; power: {response.power_source}{battery}"
+            )
 
     def _worker_status_failed(self, _message: str) -> None:
         self.statusBar().showMessage("Worker status: unavailable")

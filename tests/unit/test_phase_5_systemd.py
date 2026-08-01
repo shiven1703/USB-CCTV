@@ -32,6 +32,7 @@ def test_user_service_has_bounded_failure_restart_and_private_runtime_directory(
     assert "ExecStart=/usr/bin/usb-cctv-recorder --worker" in unit
     assert "Restart=on-failure" in unit
     assert "RestartSec=5" in unit
+    assert "TimeoutStopSec=40s" in unit
     assert "StartLimitIntervalSec=60" in unit and "StartLimitBurst=3" in unit
     assert "RuntimeDirectory=usb-cctv-recorder" in unit and "RuntimeDirectoryMode=0700" in unit
     assert "UMask=0077" in unit

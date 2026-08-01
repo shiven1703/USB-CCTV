@@ -45,6 +45,8 @@ class WorkerRecordingConfiguration:
     input_frame_rate: float
     output_frame_rate: float
     segment_duration_minutes: int
+    prevent_suspend: bool = True
+    block_lid_close: bool = False
 
     def __post_init__(self) -> None:
         if not self.media_root.is_absolute():
@@ -59,3 +61,7 @@ class WorkerRecordingConfiguration:
             raise ValueError("output frame rate must be 12 or 15")
         if not 1 <= self.segment_duration_minutes <= 360:
             raise ValueError("segment duration must be between 1 and 360 minutes")
+        if not isinstance(self.prevent_suspend, bool) or not isinstance(self.block_lid_close, bool):
+            raise ValueError("power protection settings must be boolean")
+        if self.block_lid_close and not self.prevent_suspend:
+            raise ValueError("lid-close protection requires suspend protection")

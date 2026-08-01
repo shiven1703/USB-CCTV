@@ -151,6 +151,34 @@ def test_selection_persists_worker_readable_capture_configuration(
     assert saved[-1].camera_identity == "/dev/v4l/by-id/camera"
     assert saved[-1].microphone_source == "alsa_input.camera"
     assert saved[-1].media_root == tmp_path
+    assert saved[-1].prevent_suspend
+    assert not saved[-1].block_lid_close
+
+
+def test_power_protection_settings_persist_to_worker_configuration(
+    qtbot: pytest.QtBot, tmp_path: Path
+) -> None:
+    saved: list[WorkerRecordingConfiguration] = []
+
+    class WorkerStore:
+        def save(self, configuration: WorkerRecordingConfiguration) -> None:
+            saved.append(configuration)
+
+    page, _, settings = setup_page(tmp_path)
+    page = SetupPage(
+        PreflightService(StaticDiscovery(fixture_discovery()), WritableStorage()),
+        settings,
+        worker_configuration=WorkerStore(),
+    )
+    qtbot.addWidget(page)
+    page.output_directory.setText(str(tmp_path))
+    page.set_discovery(fixture_discovery())
+    page.prevent_suspend.setChecked(False)
+    assert not page.block_lid_close.isEnabled()
+    page.prevent_suspend.setChecked(True)
+    page.block_lid_close.setChecked(True)
+    assert saved[-1].prevent_suspend
+    assert saved[-1].block_lid_close
 
 
 def test_discovery_error_is_visible_and_prevents_start(qtbot: pytest.QtBot, tmp_path: Path) -> None:

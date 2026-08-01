@@ -18,6 +18,8 @@ from usb_cctv_recorder.infrastructure.ffmpeg.command_builder import (
     build_synthetic_recording_command,
 )
 from usb_cctv_recorder.infrastructure.ipc.server import UnixSocketServer
+from usb_cctv_recorder.infrastructure.power.inhibitor import SystemdInhibitAdapter
+from usb_cctv_recorder.infrastructure.power.power_status import LinuxPowerStatusAdapter
 
 from .recording import HeadlessRecordingController, RecordingFailure
 from .supervisor import WorkerSupervisor
@@ -35,7 +37,21 @@ def run_ipc_worker(
     """
     runtime_paths = paths or XdgPaths.resolve()
     runtime_paths.create_private_directories()
-    active_supervisor = supervisor or WorkerSupervisor(_recording_factory(runtime_paths))
+    if supervisor is None:
+        try:
+            configuration = WorkerConfigurationStore(runtime_paths).load()
+        except AttributeError:
+            # Lightweight socket harnesses need only a runtime directory.
+            configuration = None
+        active_supervisor = WorkerSupervisor(
+            _recording_factory(configuration),
+            inhibitor=SystemdInhibitAdapter(),
+            power_status=LinuxPowerStatusAdapter(),
+            prevent_suspend=configuration.prevent_suspend if configuration is not None else True,
+            block_lid_close=configuration.block_lid_close if configuration is not None else False,
+        )
+    else:
+        active_supervisor = supervisor
     server = UnixSocketServer(runtime_paths.runtime / "worker.sock", active_supervisor.handle)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     server.start()
@@ -46,21 +62,24 @@ def run_ipc_worker(
         raise KeyboardInterrupt
 
     signal.signal(signal.SIGTERM, request_shutdown)
+    exit_code = 0
     try:
         while True:
             server.serve_once()
             active_supervisor.poll()
     except KeyboardInterrupt:
-        return 0
+        # SIGTERM is delivered by systemd before TimeoutStopSec. This completes the
+        # bounded Phase 4 safe-stop path before the service is allowed to exit.
+        exit_code = active_supervisor.finalize_for_shutdown()
     finally:
         server.close()
         signal.signal(signal.SIGTERM, previous_sigterm_handler)
+    return exit_code
 
 
 def _recording_factory(
-    paths: XdgPaths,
+    configuration: WorkerRecordingConfiguration | None,
 ) -> Callable[[], HeadlessRecordingController] | None:
-    configuration = WorkerConfigurationStore(paths).load()
     if configuration is None:
         return None
 

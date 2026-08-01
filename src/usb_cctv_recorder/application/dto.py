@@ -105,3 +105,26 @@ class PreflightResult:
     @property
     def ready(self) -> bool:
         return not self.errors and self.storage_estimate is not None
+
+
+class PowerProtectionState(StrEnum):
+    INACTIVE = "inactive"
+    ACTIVE = "active"
+    UNAVAILABLE = "unavailable"
+    LOST = "lost"
+
+
+class PowerSource(StrEnum):
+    AC = "ac"
+    BATTERY = "battery"
+    CRITICAL_BATTERY = "critical_battery"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class PowerStatus:
+    """Worker-facing power state that can be safely exposed over local IPC."""
+
+    protection: PowerProtectionState
+    source: PowerSource
+    battery_percent: int | None = None
