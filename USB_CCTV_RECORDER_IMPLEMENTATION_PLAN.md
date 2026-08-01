@@ -14,12 +14,12 @@
 
 ## Current implementation state — 2026-08-01
 
-**Current phase:** Phase 2 — Domain model, state machines, persistence foundations (not started)
-**Overall state:** **PHASE 1 COMPLETE AND APPROVED; PHASE 2 MAY BEGIN**
+**Current phase:** Phase 3 — Device discovery, capability probing, and preflight UI (not started)
+**Overall state:** **PHASE 2 COMPLETE AND APPROVED; PHASE 3 MAY BEGIN ONLY FROM A COMMITTED, CLEAN PHASE 2 BASELINE**
 
 **Current storage requirement:** The complete application-managed footprint must fit within a hard 90 GB decimal ceiling. On the currently probed system drive, the initial effective cap is expected to be approximately 76.2 GB after default safety reserves.
 
-Phase 0 implementation, operational checks, and user approval are complete in commit `932a042`. Phase 1 scaffolding, quality gates, CI, tests, and ADRs are complete in commit `27286ec` and approved by the user. The target KDE session confirms the webcam, microphone, FFmpeg stack, and filesystem. Phase 2 may begin only from this committed Phase 1 baseline.
+Phase 0 implementation, operational checks, and user approval are complete in commit `932a042`. Phase 1 scaffolding, quality gates, CI, tests, and ADRs are complete in commit `27286ec` and approved by the user. Phase 2 domain, persistence, and storage foundations are complete and user-approved; its completion report is `docs/phase-2-completion-report.md`. The target KDE session confirms the webcam, microphone, FFmpeg stack, and filesystem. Commit the approved Phase 2 work and begin Phase 3 only from that clean committed baseline.
 
 ### Confirmed target environment
 
