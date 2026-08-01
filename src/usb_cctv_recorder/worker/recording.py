@@ -149,7 +149,7 @@ class HeadlessRecordingController:
         if poll_seconds <= 0:
             raise ValueError("poll interval must be positive")
         while self._process.is_running():
-            self.poll()
+            self._finalize_closed_segments(include_active=False)
             time.sleep(poll_seconds)
         result = self._process.wait()
         self._finalize_closed_segments(include_active=True)

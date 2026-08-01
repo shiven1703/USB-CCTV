@@ -41,7 +41,7 @@ def test_three_synthetic_segments_are_verified_and_persisted(tmp_path: Path) -> 
 def test_safe_stop_finalizes_a_short_active_synthetic_segment(tmp_path: Path) -> None:
     controller = HeadlessRecordingController(
         tmp_path,
-        lambda pattern: build_synthetic_recording_command(pattern, 1),
+        lambda pattern: build_synthetic_recording_command(pattern, 1, realtime=True),
     )
     started = controller.start()
     time.sleep(0.6)
