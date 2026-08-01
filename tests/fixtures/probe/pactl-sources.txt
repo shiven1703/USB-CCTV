@@ -1,0 +1,2 @@
+59	alsa_input.internal_analog_stereo	PipeWire	s32le 2ch 48000Hz	SUSPENDED
+165	alsa_input.usb_camera_2k.mono-fallback	PipeWire	s16le 1ch 48000Hz	SUSPENDED

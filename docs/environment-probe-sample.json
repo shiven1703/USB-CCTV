@@ -1,0 +1,59 @@
+{
+  "audio": {
+    "server": {
+      "Server Name": "PulseAudio (on PipeWire 1.0.5)"
+    },
+    "sources": [
+      {
+        "name": "alsa_input.internal_analog_stereo",
+        "sample_spec": "s32le 2ch 48000Hz",
+        "state": "SUSPENDED"
+      },
+      {
+        "name": "alsa_input.usb_camera_2k.mono-fallback",
+        "sample_spec": "s16le 1ch 48000Hz",
+        "state": "SUSPENDED"
+      }
+    ]
+  },
+  "default_media_filesystem": {
+    "available_bytes": 104200000000,
+    "filesystem_type": "ext4"
+  },
+  "host": {
+    "architecture": "x86_64",
+    "session_type": "x11"
+  },
+  "video": {
+    "devices": [
+      {
+        "formats": [
+          {
+            "pixel_format": "MJPG",
+            "sizes": [
+              {
+                "frame_rates": [30.0],
+                "resolution": "2560x1440"
+              }
+            ]
+          }
+        ],
+        "node_kind": "capture",
+        "path": "/dev/video2",
+        "persistent_aliases": ["/dev/v4l/by-id/usb-camera-2k-video-index0"]
+      },
+      {
+        "formats": [],
+        "node_kind": "metadata_or_unusable",
+        "path": "/dev/video3",
+        "persistent_aliases": ["/dev/v4l/by-id/usb-camera-2k-video-index1"]
+      }
+    ]
+  },
+  "versions": {
+    "ffmpeg": "ffmpeg version 6.1.1",
+    "ffprobe": "ffprobe version 6.1.1",
+    "plasmashell": "plasmashell 5.27.12",
+    "systemd": "systemd 255"
+  }
+}

@@ -12,6 +12,72 @@
 **Database:** SQLite  
 **Recording container:** Matroska (`.mkv`)
 
+## Current implementation state — 2026-08-01
+
+**Current phase:** Phase 1 — Project scaffolding and quality gates (not started)
+**Overall state:** **PHASE 0 COMPLETE AND APPROVED; PHASE 1 AWAITS THE REQUIRED COMMIT**
+
+**Current storage requirement:** The complete application-managed footprint must fit within a hard 90 GB decimal ceiling. On the currently probed system drive, the initial effective cap is expected to be approximately 76.2 GB after default safety reserves.
+
+Phase 0 implementation, operational checks, and user approval are complete. The target KDE session confirms the webcam, microphone, FFmpeg stack, and filesystem. Phase 1 may begin only after the approved Phase 0 changes, including this contract, are committed as required by its entry conditions.
+
+### Confirmed target environment
+
+```text
+Operating system: Ubuntu 24.04.4 LTS (Noble)
+Architecture: x86_64 / amd64
+Desktop: KDE Plasma 5.27.12
+Session type: X11
+Python: 3.12.3
+Systemd: 255
+FFmpeg / ffprobe: 6.1.1
+Audio server: PipeWire 1.0.5 through PulseAudio compatibility
+Default media filesystem: ext4
+Current free space at probe time: approximately 104.2 GB
+Power: AC online, battery fully charged
+```
+
+### Confirmed capture hardware
+
+```text
+Camera friendly name:
+  USB 2.0 Camera 2K
+
+Persistent video capture identity:
+  /dev/v4l/by-id/usb-BC-250403-J_USB_2.0_Camera_2K_01.00.00-video-index0
+
+Current transient node at probe time:
+  /dev/video2
+
+Metadata-only sibling node to exclude:
+  /dev/video3
+  /dev/v4l/by-id/usb-BC-250403-J_USB_2.0_Camera_2K_01.00.00-video-index1
+
+Preferred physical input mode:
+  MJPEG, 2560x1440, 30 FPS
+
+Confirmed webcam microphone source:
+  alsa_input.usb-BC-250403-J_USB_2.0_Camera_2K_01.00.00-02.mono-fallback
+
+Microphone format:
+  mono, 48000 Hz
+```
+
+### Phase 0 unresolved gates
+
+The implementing agent must not begin Phase 1 until all items below are evidenced in a revised Phase 0 completion report:
+
+1. `uv --version` succeeds in the normal user session.
+2. `systemd-run --user --wait --collect /usr/bin/true` succeeds.
+3. `systemctl --user --failed` is captured; every failed unit is named and classified as relevant or irrelevant to this product.
+4. A temporary `systemd-inhibit` test is visible in `systemd-inhibit --list`.
+5. The real machine probe output is excluded from Git, preferably under `.local/probes/` with `.local/` in `.gitignore`.
+6. The committed probe fixture is sanitized but still models the real capture-node/metadata-node topology, 2K MJPEG mode, and webcam microphone.
+7. The environment contract removes the incorrect 160 GB minimum-free-space requirement.
+8. Storage policy is defined as a dynamic effective cap bounded by the 90 GB product ceiling, actual filesystem availability, operating-system reserve, and emergency finalization reserve.
+9. All existing Phase 0 tests still pass after those corrections.
+10. The user explicitly approves the revised environment contract.
+
 ---
 
 ## 1. How the implementing agent must work
@@ -121,21 +187,40 @@ The application must:
 
 ### 3.2 Default quality and storage profile
 
-The initial recommended profile is a target, not an unconditional assumption:
+The implementation must separate **camera input mode** from **encoded output profile**. The verified camera input and the initial encoded output target are not the same thing.
 
-- Preferred capture resolution: 2560 × 1440 when the camera and system can sustain it.
-- Preferred frame rate: 12 or 15 FPS for overnight use.
-- Preferred video codec: HEVC/H.265 when a verified stable encoder is available.
+Confirmed target-camera input baseline:
+
+- V4L2 input pixel format: MJPEG.
+- Input resolution: 2560 × 1440.
+- Input frame rate: 30 FPS as advertised by the device.
+- Capture identity: persistent `/dev/v4l/by-id/...-video-index0` path.
+- Reject the sibling `video-index1` metadata node because it exposes no usable capture formats.
+
+Initial encoded-output target:
+
+- Output resolution: 2560 × 1440 when sustained soak testing passes.
+- Output frame rate: configurable, initially 12 or 15 FPS for overnight use.
+- Preferred video codec: HEVC/H.265 only when a runtime smoke test proves the selected encoder is usable and stable.
 - Fallback codec: H.264.
-- Preferred audio: 48 kHz AAC at a sensible high-quality bitrate.
+- Preferred audio: mono 48 kHz AAC at a sensible high-quality bitrate.
 - No noise suppression.
 - No noise gate.
 - No automatic removal of quiet audio.
 - No artificial night-vision, brightening, denoising, or frame interpolation in version 1.
 
-The application must capability-probe the actual machine. It must not select an unsupported mode.
+Encoder names shown by `ffmpeg -encoders` are candidates, not proof of runtime usability. NVENC, QSV, VAAPI, and V4L2 M2M encoders must each pass an actual short encode test before selection. Until then, `libx264` and `libx265` are the only software fallbacks known to be present.
 
-If 2K HEVC cannot be recorded reliably, the preferred fallback is 1080p with a predictable storage budget, not uncontrolled file growth.
+If 2K recording cannot be sustained reliably within the thermal and storage budget, prefer 1920 × 1080 with predictable storage over uncontrolled file growth or unstable capture. Never silently change the profile; surface and log every fallback.
+
+Storage-oriented default targets for the verified laptop:
+
+- Live original target: no more than approximately **1.65 GB per recorded hour** under the default profile, or approximately **13.2 GB for an eight-hour night**.
+- Suggested initial live rate budget: approximately 3.3–3.5 Mb/s video plus 128 kb/s mono audio, subject to encoder smoke testing and visual-quality review.
+- Archive target: approximately **0.85–0.95 GB per recorded hour**, or approximately **6.8–7.6 GB for an eight-hour night**, while stream-copying the authoritative audio whenever compatible.
+- These are planning targets, not promises. The application must use actual measured bytes per hour after each completed segment.
+- If the selected codec cannot preserve acceptable quality within the target rate, reduce output frame rate first, then resolution, rather than silently exceeding the storage policy.
+- The preflight UI must show projected session size and projected retention before Start is enabled.
 
 ### 3.3 Low-light behaviour
 
@@ -229,46 +314,85 @@ These thresholds may be configurable under an Advanced page, but ordinary users 
 
 ### 3.7 Storage and retention
 
-The total application-managed media footprint must not exceed **150 GB decimal** by default:
+The product has a **90 GB decimal absolute application-managed ceiling**:
 
 ```text
-150 GB = 150,000,000,000 bytes
+90 GB = 90,000,000,000 bytes
 ```
 
-The cap includes:
+This ceiling covers the complete managed root, including originals, archives, thumbnails, manifests, the database, quarantined media, derived share copies kept inside the managed root, and temporary archive outputs. The application must not intentionally exceed it.
 
-- Original recordings.
-- Archives.
-- Thumbnails.
-- Manifests.
-- Database files.
-- Temporary archive outputs.
-- Quarantined interrupted files.
+The 90 GB value is still a ceiling, not a requirement that 90 GB must always be available. Calculate the effective managed-storage cap for the selected filesystem at runtime:
 
-Policy:
+```text
+effective_cap = max(
+    0,
+    min(
+        user_configured_cap,
+        90_000_000_000,
+        current_managed_usage_bytes
+          + currently_available_bytes
+          - operating_system_reserve
+          - emergency_finalization_reserve
+    )
+)
+```
 
-- Target the latest 7 days of recordings as original-quality files when storage permits.
-- Prefer approximately 100 GB for recent originals.
-- Keep at least 10 GB working reserve for safe finalization and archive operations.
-- Use remaining managed capacity for archives.
-- Use actual byte counts for enforcement; estimates are advisory only.
-- Stop safely before filling the filesystem.
-- Never delete a recording currently being written.
-- Never delete a protected item.
-- Never delete an original before its archive transaction is fully verified.
-- Delete only the oldest unprotected archive when automatic deletion is necessary.
-- If protected files consume too much capacity, warn and refuse to start a new session rather than deleting evidence.
+Recalculate the result before every session, before starting a new segment, and before every archive transaction. Use current available bytes plus current managed usage; do not derive the cap from total filesystem capacity alone.
+
+Baseline reserve policy outside the managed cap:
+
+- Operating-system reserve: configurable, default **20 GB** when the media root is on the system filesystem.
+- Emergency finalization reserve: configurable, default **8 GB**. It protects active-segment finalization, database durability, and failure recovery.
+- Never allow recording, archiving, exporting, or thumbnail generation to consume either reserve.
+- On a separate non-system recording filesystem, the UI may recommend a smaller OS reserve, but the emergency finalization reserve still applies.
+
+The current target laptop had approximately 104.2 GB available at probe time. With default 20 GB and 8 GB reserves and no existing managed media, the initial effective cap is therefore approximately **76.2 GB**, not 90 GB. The cap must rise or fall dynamically as unrelated filesystem usage changes.
+
+Default logical allocation inside the effective cap:
+
+- Recent original recordings: **52%**.
+- Verified compressed archives: **33%**.
+- Metadata, thumbnails, quarantine, and managed share copies: **5%**.
+- Archive-transaction headroom: **10%**.
+
+These are policy targets rather than partitions. Protected evidence may exceed a pool target, but total managed usage must still remain under the effective cap. When protected evidence prevents safe operation, warn and refuse to start another session rather than deleting it.
+
+Retention targets:
+
+- Target the latest **3 nights** as original-quality recordings when measured segment sizes make that feasible.
+- Target at least **7 nights of total history** across originals and verified archives when measured sizes make that feasible.
+- Do not guarantee either target. Calculate feasibility from actual recent bytes per recorded hour and planned session length.
+- Archive the oldest eligible unprotected originals once the original pool is under pressure, even if they are newer than three days, but only through the fully verified archive transaction.
+- Delete only the oldest eligible unprotected verified archive when the archive pool or total cap requires deletion.
 
 The UI must show:
 
-- Current managed usage.
-- Original usage.
-- Archive usage.
-- Temporary/reserve usage.
+- Configured ceiling, always no greater than 90 GB.
+- Calculated effective cap.
+- Why the effective cap is lower, if applicable.
+- Current managed usage by category.
 - Filesystem free space.
+- Operating-system reserve.
+- Emergency finalization reserve.
+- Archive-transaction headroom.
+- Recent measured bytes per recorded hour.
 - Estimated next-session size.
-- Estimated 7-day requirement.
-- Whether the selected profile fits the policy.
+- Estimated 3-night original requirement.
+- Estimated 7-night total-history requirement.
+- Estimated achievable original nights and total-history nights.
+- Whether the selected profile fits the current policy.
+
+Required enforcement rules:
+
+- Use actual byte counts for enforcement; estimates are advisory only.
+- Stop safely before the filesystem or managed cap is exhausted.
+- Reserve enough space to finish the active segment before opening it.
+- Never delete a recording currently being written.
+- Never delete protected, partial, interrupted-unverified, or quarantined evidence automatically.
+- Never delete an original before its separately created archive is fully decoded, verified, atomically published, catalogued, and durably committed.
+- A hard-coded 160 GB or 150 GB requirement is forbidden.
+- A user-configured value greater than 90 GB must be rejected by validation rather than silently accepted.
 
 ### 3.8 Archiving
 
@@ -863,13 +987,75 @@ Each phase report must include exact commands and summarized output. Do not writ
 
 Confirm the actual Kubuntu environment before implementation choices become fixed.
 
+## Current state
+
+**State:** `PASS`
+**Approval:** `APPROVED_BY_USER_2026-08-01`
+**Phase 1 permission:** `GRANTED_AFTER_PHASE_0_CHANGES_ARE_COMMITTED`
+
+The Phase 0 probe implementation, parser tests, no-write tests, and operational checks pass. The first agent-run probe could not access the desktop hardware because it ran outside the correct session. That result is superseded for hardware discovery by a second probe executed from the active KDE session.
+
+### Confirmed passed items
+
+- Ubuntu 24.04.4 LTS and x86_64 baseline recorded.
+- KDE Plasma 5.27.12 and X11 session recorded.
+- Python 3.12.3 and systemd 255 recorded.
+- FFmpeg and ffprobe 6.1.1 detected.
+- PipeWire-Pulse audio environment detected.
+- Target 2K webcam detected.
+- Stable camera alias detected.
+- Capture node `/dev/video2` distinguished from metadata-only `/dev/video3`.
+- MJPEG 2560 × 1440 at 30 FPS detected.
+- Webcam microphone detected as mono 48 kHz.
+- AC-online power state detected.
+- ext4 recording filesystem and approximately 104.2 GB available space recorded.
+- No privileged system changes were made by the probe.
+
+### Open issues and mandatory corrections
+
+1. **Dependency manager not yet evidenced**
+   - Capture the output of `uv --version`.
+   - Install `uv` in the user environment if the command fails.
+
+2. **Systemd user manager operational test not yet evidenced**
+   - Run `systemctl --user --failed`.
+   - Identify the failed unit previously reported by the desktop session.
+   - Classify whether it affects transient services, D-Bus, PipeWire, or the recorder worker.
+   - Run `systemd-run --user --wait --collect /usr/bin/true` and require success.
+
+3. **Power-inhibitor test not yet evidenced**
+   - Hold a temporary inhibitor with `systemd-inhibit --what=sleep:idle --mode=block`.
+   - Confirm it is visible in `systemd-inhibit --list`.
+   - Do not permanently modify KDE or logind settings.
+
+4. **Probe-data repository hygiene not yet evidenced**
+   - Store the real report under `.local/probes/`.
+   - Add `.local/` to `.gitignore`.
+   - Ensure committed fixtures remove username, hostname, home paths, device serials, and other machine-specific values while retaining topology and capability semantics.
+
+5. **Storage contract is incorrect in the current completion report**
+   - Remove the claimed 160 GB minimum-free-space requirement.
+   - Adopt the dynamic effective-cap formula in Section 3.7.
+   - Record that the current filesystem cannot expose the full 90 GB cap while default safety reserves are active; the initial effective cap is approximately 76.2 GB when managed usage is zero.
+   - Adopt a calculated three-night original target and seven-night total-history target, neither of which is unconditional.
+
+6. **Environment contract must be updated with the real hardware baseline**
+   - Persistent camera identity and metadata-node exclusion.
+   - MJPEG 2560 × 1440 at 30 FPS input baseline.
+   - Explicit webcam Pulse source name and mono 48 kHz format.
+   - Explicit rule not to rely on the audio server default source.
+   - Explicit rule that hardware encoder availability requires runtime smoke tests.
+
 ## Deliverables
 
 - `docs/environment-contract.md`.
-- A read-only environment probe script.
-- Captured sample probe output from the target laptop.
+- Read-only `scripts/probe_environment.py`.
+- Sanitized committed sample probe output.
+- Real local probe output excluded from Git.
 - ADR for supported OS baseline.
-- Confirmed minimum free-space and output location.
+- Updated 90 GB storage-cap and retention policy.
+- Operational evidence for systemd user service and inhibitor support.
+- Revised Phase 0 completion report.
 
 ## Probe requirements
 
@@ -877,38 +1063,87 @@ Collect without changing system settings:
 
 - Kubuntu/Ubuntu version.
 - KDE Plasma version.
+- Session type.
 - CPU architecture.
 - Python version.
+- `uv` version.
 - systemd version.
 - FFmpeg and ffprobe versions.
 - PipeWire/PulseAudio status.
 - Available V4L2 device paths and persistent aliases.
+- Capture-capable versus metadata-only V4L2 nodes.
 - Webcam-supported pixel formats, resolutions, and frame rates.
 - Available audio sources.
-- Available hardware video encoders.
+- Hardware video encoder candidates.
 - Current AC/battery state.
+- Current inhibitors.
+- systemd user-manager state and failed units.
 - Current suspend and lid policies where readable without privilege.
 - Filesystem type and available space for the default media directory.
 
 ## Tests
 
-- Unit-test parsing of all probe outputs using committed fixtures.
+- Unit-test parsing of all probe outputs using committed sanitized fixtures.
 - Test missing-command behaviour.
 - Test malformed-output behaviour.
-- Test that the probe performs no writes outside a temporary test directory.
+- Test camera capture-node versus metadata-node classification.
+- Test stable device aliases when `/dev/videoN` changes.
+- Test webcam microphone selection independent of the default audio source.
+- Test that the probe performs no writes unless `--output` is explicitly supplied.
+- Test that any output path is the only path written.
+- Run `python3 -m py_compile scripts/probe_environment.py`.
+- Run the complete Phase 0 unit test suite.
+- Run `git diff --check`.
 
 ## Acceptance criteria
 
-- Target OS and architecture are explicitly recorded.
-- Actual webcam and microphone appear in probe output.
-- At least one usable video mode and one audio source are identified.
-- FFmpeg and ffprobe are available or a packaging dependency decision is recorded.
+Phase 0 is approved only when all criteria below pass:
+
+- Target OS, desktop, session type, and architecture are explicitly recorded.
+- Actual webcam and microphone appear in the probe output.
+- Capture node and metadata-only node are correctly distinguished.
+- MJPEG 2560 × 1440 at 30 FPS is recorded as the preferred physical input baseline.
+- The stable webcam microphone source is recorded explicitly.
+- FFmpeg and ffprobe are available.
+- `uv --version` succeeds.
+- A transient systemd user unit succeeds.
+- Every failed systemd user unit is named and impact-classified.
+- A temporary sleep/idle inhibitor can be acquired and observed.
+- Real probe data is excluded from source control.
+- Sanitized fixtures preserve the real topology without personal identifiers.
+- The 90 GB dynamic storage-cap policy replaces the incorrect 160 GB minimum and supersedes the earlier 150 GB ceiling.
+- All Phase 0 automated tests pass after corrections.
 - No privileged system change is made.
-- User approves the environment contract.
+- User approves the revised environment contract.
+
+## Required revised completion report
+
+The implementing agent must report:
+
+```text
+Phase 0 state: PASS or FAIL
+Environment-contract revision: <commit or file summary>
+uv: <version or failure>
+Transient user-service test: PASS or FAIL
+Failed user units: <names and impact classification>
+Inhibitor test: PASS or FAIL
+Camera: <persistent alias>
+Rejected metadata node: <persistent alias>
+Camera mode: <pixel format, resolution, FPS>
+Microphone: <stable source name and format>
+Filesystem free bytes: <actual>
+Configured product cap, maximum 90 GB: <actual>
+Calculated effective cap: <actual>
+OS reserve: <actual>
+Emergency finalization reserve: <actual>
+Git hygiene: PASS or FAIL
+Tests executed: <exact commands and outcomes>
+User approval requested: YES
+```
 
 ## Stop gate
 
-Do not start Phase 1 until the user approves the environment assumptions.
+Do not start Phase 1 until every acceptance criterion passes and the user explicitly approves Phase 0.
 
 ---
 
@@ -917,6 +1152,20 @@ Do not start Phase 1 until the user approves the environment assumptions.
 ## Goal
 
 Create a maintainable repository with no product functionality beyond a launchable placeholder window and worker entrypoint.
+
+## Entry conditions
+
+Phase 1 may begin only when:
+
+- Phase 0 state is `PASS`.
+- User approval is recorded.
+- `uv` is installed and its version is recorded.
+- The updated environment contract is committed.
+- The real probe report is Git-ignored.
+- The 90 GB ceiling, dynamic effective-cap semantics, and revised retention targets are accepted.
+- systemd user service and inhibitor smoke tests pass.
+
+If any entry condition is false, stop without scaffolding Phase 1.
 
 ## Deliverables
 
@@ -1022,6 +1271,10 @@ Allow the user to select and test the real camera and microphone without startin
 ## Rules
 
 - Store stable device identifiers, never only numeric indexes.
+- On the confirmed target system, prefer the `...video-index0` persistent alias and exclude `...video-index1`.
+- Exclude any V4L2 node that exposes only metadata or no capture formats.
+- Prefer MJPEG input for the confirmed 2K camera; never choose 2K YUYV because the device advertises only 1 FPS for that mode.
+- Explicitly select the webcam Pulse source; never rely on the audio server default source.
 - Preview must release devices before recording starts.
 - Do not open the same camera through two independent consumers unless capability has been verified.
 - Do not claim audio is valid merely because a device is listed; test packets or level activity.
@@ -1405,17 +1658,18 @@ Wait for approval.
 
 ---
 
-# Phase 10 — Automatic retention and 150 GB storage governor
+# Phase 10 — Automatic retention and dynamic storage governor
 
 ## Goal
 
-Enforce the global storage cap while targeting seven days of recent originals and preserving protected evidence.
+Enforce the 90 GB ceiling and the lower runtime-calculated effective cap while targeting three recent original nights and seven total-history nights when feasible, without risking protected evidence.
 
 ## Deliverables
 
 - Byte-accurate storage accounting.
 - Session-size estimator.
-- Seven-day feasibility estimator.
+- Three-night original-feasibility estimator.
+- Seven-night total-history feasibility estimator.
 - Automatic archive scheduler.
 - Oldest-unprotected-archive deletion policy.
 - Working-reserve enforcement.
@@ -1439,7 +1693,12 @@ Do not run heavy archive transcoding while active recording is healthy unless th
 
 ## Tests
 
-- Exact 150,000,000,000-byte cap calculations.
+- Exact 90,000,000,000-byte absolute-ceiling calculations.
+- Effective-cap calculations on filesystems with less free space than the configured ceiling.
+- Operating-system and emergency-finalization-reserve subtraction and zero clamping.
+- Current-machine case: 104.2 GB available, zero managed usage, 20 GB OS reserve, and 8 GB emergency reserve yields approximately 76.2 GB effective cap.
+- Default pool-ratio calculations: 52% originals, 33% archives, 5% metadata/quarantine/share copies, and 10% transaction headroom.
+- Validation rejects configured caps greater than 90 GB.
 - Filesystem free-space lower than application cap.
 - Protected media consumes most capacity.
 - No eligible deletion candidate.
@@ -1451,7 +1710,9 @@ Do not run heavy archive transcoding while active recording is healthy unless th
 
 ## Acceptance criteria
 
-- Managed usage never intentionally exceeds the configured cap.
+- Managed usage never intentionally exceeds 90,000,000,000 bytes or the lower runtime effective cap.
+- The default policy targets three recent original nights and seven total-history nights only when measured sizes demonstrate feasibility.
+- Pool pressure may trigger earlier archiving, but never unsafe deletion or in-place transcoding.
 - The worker reserves space to finalize the active segment.
 - The application safely stops instead of filling the filesystem.
 - Protected evidence is never automatically deleted.
@@ -1599,7 +1860,7 @@ Required controls:
 - Prevent suspend/hibernate switch.
 - Ignore lid closure switch.
 - Storage-cap display.
-- Seven-day feasibility estimate.
+- Three-night original-retention and seven-night total-history feasibility estimates.
 - Test camera and microphone button.
 - Start button.
 
@@ -1689,9 +1950,12 @@ Include:
 
 - Default segment duration.
 - Default recording profile.
-- Storage cap.
-- Original-retention target in days.
-- Working reserve.
+- Storage cap, validated in the range allowed by policy and never above 90 GB.
+- Original-retention target, default 3 nights.
+- Total-history target, default 7 nights across originals and archives.
+- Operating-system reserve.
+- Emergency finalization reserve.
+- Archive-transaction headroom.
 - Archive profile.
 - Archive-only-when-not-recording switch.
 - Watchdog thresholds under Advanced.
@@ -1777,7 +2041,7 @@ Create Architecture Decision Records for at least:
 6. SQLite plus per-session manifests.
 7. Clean Architecture dependency boundaries.
 8. Archive transaction and source-deletion policy.
-9. 150 GB storage governor and seven-day target.
+9. 90 GB storage governor, three-night original target, and seven-night total-history target.
 10. Power-inhibitor strategy.
 11. Hardware encoder selection and fallback.
 12. Packaging as PyInstaller one-folder inside `.deb`.
