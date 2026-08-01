@@ -11,11 +11,10 @@ import platform
 import re
 import shutil
 import subprocess
-import sys
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Sequence
-
+from typing import Any
 
 PROBE_SCHEMA_VERSION = 1
 COMMAND_TIMEOUT_SECONDS = 10
@@ -122,9 +121,8 @@ def parse_encoder_candidates(output: str) -> list[str]:
         if match is None:
             continue
         encoder = match.group(1)
-        if (
-            ("h264" in encoder or "hevc" in encoder)
-            and any(token in encoder for token in ("nvenc", "qsv", "vaapi", "v4l2m2m", "amf"))
+        if ("h264" in encoder or "hevc" in encoder) and any(
+            token in encoder for token in ("nvenc", "qsv", "vaapi", "v4l2m2m", "amf")
         ):
             candidates.append(encoder)
     return candidates
@@ -251,10 +249,10 @@ def probe() -> dict[str, Any]:
         )
         video_devices.append(
             {
-            "path": path,
-            "persistent_aliases": stable_aliases(path),
-            "node_kind": classify_video_node(formats),
-            "formats": formats,
+                "path": path,
+                "persistent_aliases": stable_aliases(path),
+                "node_kind": classify_video_node(formats),
+                "formats": formats,
             }
         )
     default_media_directory = Path.home() / "Videos" / "USB-CCTV-Recorder"
@@ -262,7 +260,10 @@ def probe() -> dict[str, Any]:
     while not filesystem_root.exists() and filesystem_root.parent != filesystem_root:
         filesystem_root = filesystem_root.parent
     filesystem = os.statvfs(filesystem_root)
-    logind_files = [Path("/etc/systemd/logind.conf"), *map(Path, glob.glob("/etc/systemd/logind.conf.d/*.conf"))]
+    logind_files = [
+        Path("/etc/systemd/logind.conf"),
+        *map(Path, glob.glob("/etc/systemd/logind.conf.d/*.conf")),
+    ]
     return {
         "schema_version": PROBE_SCHEMA_VERSION,
         "generated_at_utc": datetime.now(UTC).isoformat(),
@@ -290,7 +291,9 @@ def probe() -> dict[str, Any]:
         ),
         "power_supplies": parse_power_supplies(Path("/sys/class/power_supply")),
         "logind_configured_values": {
-            path.name: parse_key_value_lines(read_text(path) or "") for path in logind_files if path.is_file()
+            path.name: parse_key_value_lines(read_text(path) or "")
+            for path in logind_files
+            if path.is_file()
         },
         "default_media_filesystem": {
             "requested_path": str(default_media_directory),

@@ -5,7 +5,6 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 MODULE_PATH = REPOSITORY_ROOT / "scripts" / "probe_environment.py"
 SPEC = importlib.util.spec_from_file_location("probe_environment", MODULE_PATH)
@@ -30,7 +29,9 @@ class EnvironmentProbeParserTests(unittest.TestCase):
 
     def test_selects_webcam_microphone_without_using_default_source(self) -> None:
         sources = probe_environment.parse_pactl_sources(self.fixture("pactl-sources.txt"))
-        selected = probe_environment.select_audio_source(sources, "alsa_input.usb_camera_2k.mono-fallback")
+        selected = probe_environment.select_audio_source(
+            sources, "alsa_input.usb_camera_2k.mono-fallback"
+        )
         self.assertIsNotNone(selected)
         self.assertEqual(selected["sample_spec"], "s16le 1ch 48000Hz")
 
@@ -56,7 +57,9 @@ class EnvironmentProbeParserTests(unittest.TestCase):
                 "persistent_aliases": ["/dev/v4l/by-id/usb-camera-video-index0"],
             },
         ]
-        found = probe_environment.find_video_device_by_alias(devices, "/dev/v4l/by-id/usb-camera-video-index0")
+        found = probe_environment.find_video_device_by_alias(
+            devices, "/dev/v4l/by-id/usb-camera-video-index0"
+        )
         self.assertEqual(found["path"], "/dev/video2")
 
     def test_classifies_capture_and_metadata_nodes(self) -> None:
@@ -77,7 +80,9 @@ class EnvironmentProbeParserTests(unittest.TestCase):
         self.assertEqual(probe_environment.parse_version("\n\n"), None)
 
     def test_missing_command_is_reported(self) -> None:
-        result = probe_environment.command_result(["definitely-not-an-installed-command", "--version"])
+        result = probe_environment.command_result(
+            ["definitely-not-an-installed-command", "--version"]
+        )
         self.assertEqual(result["status"], "missing")
 
     def test_probe_does_not_write_without_an_output_path(self) -> None:
