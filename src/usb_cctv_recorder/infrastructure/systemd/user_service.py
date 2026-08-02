@@ -18,6 +18,9 @@ class SystemdUserService:
         self._runner = runner or StructuredCommandRunner()
 
     def start_worker(self) -> None:
+        # A package upgrade can replace this static unit while the user manager is running.
+        # Reload in the owning user session; never enable the worker at login.
+        self._run(("systemctl", "--user", "daemon-reload"))
         self._run(("systemctl", "--user", "start", UNIT_NAME))
 
     def stop_worker(self) -> None:

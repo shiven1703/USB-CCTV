@@ -1,0 +1,28 @@
+USB CCTV Recorder package notes
+===============================
+
+The package installs the frozen application below /usr/lib/usb-cctv-recorder,
+its launcher in /usr/bin, a KDE desktop entry, hicolor icons, and the static
+systemd user unit below /usr/lib/systemd/user. The worker is never enabled at
+login. It starts only when the GUI requests it.
+
+On installation or upgrade, the package reloads the invoking user's systemd
+manager when that session can be identified. The application reloads that user
+manager again immediately before it starts the worker, so graphical installers
+that do not provide SUDO_USER are handled safely as well.
+
+Uninstalling this package does not remove user data. The following paths remain
+until the user deliberately removes them:
+
+* Configuration: $XDG_CONFIG_HOME/usb-cctv-recorder/ (normally
+  ~/.config/usb-cctv-recorder/)
+* Derived SQLite catalogue and state: $XDG_STATE_HOME/usb-cctv-recorder/
+  (normally ~/.local/state/usb-cctv-recorder/)
+* Cache: $XDG_CACHE_HOME/usb-cctv-recorder/ (normally ~/.cache/usb-cctv-recorder/)
+* Recordings: ~/Videos/USB-CCTV-Recorder/ by default, or the media root selected
+  by the user.
+
+Before an upgrade or removal, stop an active recording safely. Package upgrades
+do not replace or migrate media. Existing private configuration is read through
+the application migration path, and the catalogue can be rebuilt from media and
+manifests with `usb-cctv-recorder --rebuild-catalogue --media-root <absolute path>`.

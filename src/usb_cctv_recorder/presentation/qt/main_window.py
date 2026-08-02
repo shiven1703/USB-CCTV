@@ -1,5 +1,6 @@
 """Main window hosting the Phase 3 setup page."""
 
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -11,7 +12,7 @@ from PySide6.QtWidgets import QMainWindow, QPushButton, QTabWidget
 from usb_cctv_recorder.application.archive import ArchiveService
 from usb_cctv_recorder.application.dto import DeviceDiscovery
 from usb_cctv_recorder.application.library import LibraryService
-from usb_cctv_recorder.application.ports import WorkerConfigurationPort
+from usb_cctv_recorder.application.ports import SystemServicePort, WorkerConfigurationPort
 from usb_cctv_recorder.application.preflight import PreflightService
 from usb_cctv_recorder.application.storage import StorageGovernorService
 from usb_cctv_recorder.infrastructure.ipc.client import UnixSocketClient
@@ -68,19 +69,39 @@ class WorkerCommandThread(QThread):
     completed = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, client_factory: Callable[[], UnixSocketClient], command: Command) -> None:
+    def __init__(
+        self,
+        client_factory: Callable[[], UnixSocketClient],
+        command: Command,
+        service: SystemServicePort | None = None,
+    ) -> None:
         super().__init__()
         self._client_factory = client_factory
         self._command = command
+        self._service = service
 
     def run(self) -> None:
         try:
-            response = self._client_factory().request(Request(self._command, str(uuid.uuid4())))
+            if self._command is Command.START and self._service is not None:
+                self._service.start_worker()
+            response = self._request_response()
+            if self._command is Command.STOP and response.accepted and self._service is not None:
+                self._service.stop_worker()
             if not self.isInterruptionRequested():
                 self.completed.emit(response)
         except Exception as error:  # Boundary: a missing worker is a normal UI state.
             if not self.isInterruptionRequested():
                 self.failed.emit(str(error))
+
+    def _request_response(self) -> Response:
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                return self._client_factory().request(Request(self._command, str(uuid.uuid4())))
+            except OSError:
+                if self._command is not Command.START or time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.1)
 
 
 class MainWindow(QMainWindow):
@@ -95,6 +116,7 @@ class MainWindow(QMainWindow):
         library_media_root: Path | None = None,
         archive_service: ArchiveService | None = None,
         storage_service: StorageGovernorService | None = None,
+        worker_service: SystemServicePort | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("USB CCTV Recorder")
@@ -124,11 +146,13 @@ class MainWindow(QMainWindow):
         self._worker_status_thread: WorkerStatusThread | None = None
         self._worker_command_thread: WorkerCommandThread | None = None
         self._worker_client_factory = worker_client_factory
+        self._worker_service = worker_service
         self._close_requested = False
         self._retry_button = QPushButton("Retry now", self)
         self._retry_button.setEnabled(False)
         self._retry_button.clicked.connect(self._retry_now)
         self.statusBar().addPermanentWidget(self._retry_button)
+        self.setup_page.start_button.clicked.connect(self._toggle_recording)
         if preflight_service is not None:
             self._probe_thread = DeviceProbeThread(preflight_service)
             self._probe_thread.completed.connect(self._discovery_completed)
@@ -137,8 +161,8 @@ class MainWindow(QMainWindow):
             self._probe_thread.start()
         if worker_client_factory is not None:
             self._worker_status_thread = WorkerStatusThread(worker_client_factory)
-            self._worker_status_thread.completed.connect(self._worker_status_completed)
-            self._worker_status_thread.failed.connect(self._worker_status_failed)
+            self._worker_status_thread.completed.connect(self._initial_worker_status_completed)
+            self._worker_status_thread.failed.connect(self._initial_worker_status_failed)
             self._worker_status_thread.start()
 
     def _discovery_completed(self, discovery: object) -> None:
@@ -151,6 +175,10 @@ class MainWindow(QMainWindow):
 
     def _worker_status_completed(self, response: object) -> None:
         if isinstance(response, Response):
+            self.setup_page.set_recording_active(
+                response.state
+                in {"starting", "recording_av", "recording_audio_only", "recording_video_only"}
+            )
             session = f" session {response.session_id}" if response.session_id else ""
             battery = (
                 f", battery {response.battery_percent}%"
@@ -167,9 +195,18 @@ class MainWindow(QMainWindow):
             )
             self._retry_button.setEnabled(response.state == "recovering")
 
+    def _initial_worker_status_completed(self, response: object) -> None:
+        if self._worker_command_thread is None:
+            self._worker_status_completed(response)
+
     def _worker_status_failed(self, _message: str) -> None:
+        self.setup_page.set_recording_active(False)
         self.statusBar().showMessage("Worker status: unavailable")
         self._retry_button.setEnabled(False)
+
+    def _initial_worker_status_failed(self, message: str) -> None:
+        if self._worker_command_thread is None:
+            self._worker_status_failed(message)
 
     def _retry_now(self) -> None:
         if self._worker_client_factory is None or (
@@ -183,6 +220,26 @@ class MainWindow(QMainWindow):
         self._worker_command_thread.completed.connect(self._worker_status_completed)
         self._worker_command_thread.failed.connect(self._worker_status_failed)
         self._worker_command_thread.start()
+
+    def _toggle_recording(self) -> None:
+        if self._worker_client_factory is None or (
+            self._worker_command_thread is not None and self._worker_command_thread.isRunning()
+        ):
+            return
+        command = (
+            Command.STOP if self.setup_page.start_button.text() == "Stop safely" else Command.START
+        )
+        self.setup_page.start_button.setEnabled(False)
+        self._worker_command_thread = WorkerCommandThread(
+            self._worker_client_factory, command, self._worker_service
+        )
+        self._worker_command_thread.completed.connect(self._worker_status_completed)
+        self._worker_command_thread.failed.connect(self._worker_command_failed)
+        self._worker_command_thread.start()
+
+    def _worker_command_failed(self, message: str) -> None:
+        self.setup_page.set_recording_active(False)
+        self.statusBar().showMessage(f"Worker command failed: {message}")
 
     def closeEvent(self, event: QCloseEvent) -> None:
         # Closing the window deliberately never sends a recording stop request.

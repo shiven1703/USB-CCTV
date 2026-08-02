@@ -121,6 +121,8 @@ class SetupPage(QWidget):
         self.test_button.clicked.connect(self._run_test)
         self.start_button = QPushButton("Start")
         self.start_button.setEnabled(False)
+        self._preflight_ready = False
+        self._recording_active = False
         self._preview = preview_factory(self.video_preview)
 
         form = QFormLayout()
@@ -267,7 +269,8 @@ class SetupPage(QWidget):
                 ),
             )
         except ValueError:
-            self.start_button.setEnabled(False)
+            self._preflight_ready = False
+            self._update_recording_button()
             self.preflight_status.setText("Choose an absolute recording directory.")
             return
         result = self._service.validate(
@@ -281,10 +284,24 @@ class SetupPage(QWidget):
             preview_succeeded=self._preview_succeeded,
             preview_failed=self._preview_failed,
         )
-        self.start_button.setEnabled(result.ready)
+        self._preflight_ready = result.ready
+        self._update_recording_button()
         if result.storage_estimate is not None:
             self.storage_estimate.setText(result.storage_estimate.message)
         self.preflight_status.setText(_preflight_message(result.errors, self._preview_message))
+
+    def set_recording_active(self, active: bool) -> None:
+        """Reflect worker-owned recording state without giving the page process ownership."""
+        self._recording_active = active
+        self._update_recording_button()
+
+    def _update_recording_button(self) -> None:
+        if self._recording_active:
+            self.start_button.setText("Stop safely")
+            self.start_button.setEnabled(True)
+            return
+        self.start_button.setText("Start")
+        self.start_button.setEnabled(self._preflight_ready)
 
     def _update_storage_dashboard(self) -> None:
         if self._storage_service is None:

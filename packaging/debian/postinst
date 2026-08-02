@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# dpkg normally runs as root and cannot know every graphical user's D-Bus
+# session. Reload the invoking user's active manager when sudo supplies it;
+# SystemdUserService reloads again in the owning user session before start.
+if [ "${1:-}" = "configure" ] && [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    uid="$(id -u "$SUDO_USER")"
+    runtime_directory="/run/user/$uid"
+    if [ -S "$runtime_directory/bus" ]; then
+        runuser -u "$SUDO_USER" -- env \
+            XDG_RUNTIME_DIR="$runtime_directory" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+            systemctl --user daemon-reload || true
+    fi
+fi

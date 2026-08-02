@@ -46,13 +46,20 @@ def test_normal_cli_mode_starts_gui(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_bootstrap_starts_presentation_application(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    received_factory: list[object] = []
+    received_worker_client_factories: list[object] = []
 
     def fake_run_application(factory: object) -> int:
-        received_factory.append(factory)
+        factory()  # type: ignore[operator]
         return 0
 
+    class FakeWindow:
+        def __init__(
+            self, _service: object, worker_client_factory: object, *_: object, **__: object
+        ) -> None:
+            received_worker_client_factories.append(worker_client_factory)
+
     monkeypatch.setattr(bootstrap, "run_application", fake_run_application)
+    monkeypatch.setattr(bootstrap, "MainWindow", FakeWindow)
     monkeypatch.setattr(
         bootstrap.XdgPaths,
         "resolve",
@@ -66,7 +73,8 @@ def test_bootstrap_starts_presentation_application(
     )
 
     assert bootstrap.run_gui() == 0
-    assert received_factory
+    worker_client_factory = received_worker_client_factories[0]
+    assert worker_client_factory()._path == tmp_path / "runtime" / "worker.sock"  # type: ignore[operator,union-attr]
 
 
 def test_qt_application_starts_window(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,6 +117,31 @@ def test_catalogue_rebuild_cli_requires_an_absolute_media_root(
         __main__.main(["--rebuild-catalogue"])
     with pytest.raises(ValueError, match="absolute"):
         __main__.main(["--rebuild-catalogue", "--media-root", "relative"])
+
+
+def test_bootstrap_rebuilds_only_the_derived_catalogue(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    paths = XdgPaths(
+        tmp_path / "config",
+        tmp_path / "state",
+        tmp_path / "cache",
+        tmp_path / "runtime",
+        tmp_path / "media",
+    )
+    rebuilt: list[Path] = []
+
+    class Catalogue:
+        def rebuild(self, media_root: Path) -> int:
+            rebuilt.append(media_root)
+            return 3
+
+    monkeypatch.setattr(bootstrap.XdgPaths, "resolve", lambda: paths)
+    monkeypatch.setattr(bootstrap, "SQLiteCatalogue", lambda path: path)
+    monkeypatch.setattr(bootstrap, "SQLiteLibraryCatalogue", lambda _: Catalogue())
+
+    assert bootstrap.rebuild_catalogue(tmp_path / "media") == 3
+    assert rebuilt == [tmp_path / "media"]
 
 
 def test_development_cli_runs_a_synthetic_recording(tmp_path: Path) -> None:

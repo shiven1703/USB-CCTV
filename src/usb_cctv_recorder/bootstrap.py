@@ -17,6 +17,7 @@ from .infrastructure.persistence.sqlite import SQLiteCatalogue
 from .infrastructure.storage.archive_transaction import ArchiveTransactionManager
 from .infrastructure.storage.governor import FilesystemStorageGovernor
 from .infrastructure.storage.preflight import FilesystemStorageEstimate
+from .infrastructure.systemd.user_service import SystemdUserService
 from .presentation.qt.app import run_application
 from .presentation.qt.main_window import MainWindow
 
@@ -82,5 +83,6 @@ def run_gui() -> int:
             media_root,
             archive_service,
             storage_service,
+            worker_service=SystemdUserService(runner),
         )
     )

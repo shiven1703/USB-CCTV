@@ -11,6 +11,7 @@ from usb_cctv_recorder.infrastructure.ipc.protocol import Command, Response
 from usb_cctv_recorder.presentation.qt.main_window import (
     DeviceProbeThread,
     MainWindow,
+    WorkerCommandThread,
     WorkerStatusThread,
 )
 
@@ -119,3 +120,138 @@ def test_worker_command_thread_reports_worker_failure(qtbot: pytest.QtBot) -> No
     with qtbot.waitSignal(thread.failed, timeout=2_000) as result:
         thread.start()
     assert result.args == ["missing"]
+
+
+def test_setup_start_button_controls_the_static_worker_through_closed_ipc(
+    qtbot: pytest.QtBot,
+) -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.requests: list[object] = []
+
+        def request(self, request: object) -> Response:
+            self.requests.append(request)
+            command = getattr(request, "command")
+            state = "recording_av" if command is Command.START else "completed"
+            return Response(command, str(uuid.uuid4()), state, True)
+
+    class Service:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def start_worker(self) -> None:
+            self.calls.append("start")
+
+        def stop_worker(self) -> None:
+            self.calls.append("stop")
+
+    client = RecordingClient()
+    service = Service()
+    window = MainWindow(
+        worker_client_factory=lambda: client,  # type: ignore[arg-type]
+        worker_service=service,  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(window)
+    window.setup_page.start_button.setEnabled(True)
+
+    window._toggle_recording()
+    qtbot.waitUntil(
+        lambda: service.calls == ["start"]
+        and window.setup_page.start_button.text() == "Stop safely"
+    )
+
+    window._toggle_recording()
+    qtbot.waitUntil(
+        lambda: service.calls == ["start", "stop"]
+        and window.setup_page.start_button.text() == "Start"
+    )
+    assert [
+        getattr(item, "command")
+        for item in client.requests
+        if getattr(item, "command") in {Command.START, Command.STOP}
+    ] == [
+        Command.START,
+        Command.STOP,
+    ]
+
+
+def test_worker_command_thread_starts_and_stops_the_static_service_before_and_after_ipc() -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.commands: list[Command] = []
+
+        def request(self, request: object) -> Response:
+            command = getattr(request, "command")
+            self.commands.append(command)
+            return Response(command, str(uuid.uuid4()), "completed", True)
+
+    class Service:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def start_worker(self) -> None:
+            self.calls.append("start")
+
+        def stop_worker(self) -> None:
+            self.calls.append("stop")
+
+    client = Client()
+    service = Service()
+    responses: list[Response] = []
+    start = WorkerCommandThread(lambda: client, Command.START, service)  # type: ignore[arg-type]
+    start.completed.connect(responses.append)
+    start.run()
+    stop = WorkerCommandThread(lambda: client, Command.STOP, service)  # type: ignore[arg-type]
+    stop.completed.connect(responses.append)
+    stop.run()
+
+    assert client.commands == [Command.START, Command.STOP]
+    assert service.calls == ["start", "stop"]
+    assert [response.command for response in responses] == [Command.START, Command.STOP]
+
+
+def test_start_command_retries_until_the_new_worker_socket_is_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Client:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def request(self, request: object) -> Response:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise OSError("socket not ready")
+            return Response(getattr(request, "command"), str(uuid.uuid4()), "recording_av", True)
+
+    client = Client()
+    thread = WorkerCommandThread(lambda: client, Command.START)  # type: ignore[arg-type]
+    responses: list[Response] = []
+    thread.completed.connect(responses.append)
+    monkeypatch.setattr("usb_cctv_recorder.presentation.qt.main_window.time.sleep", lambda _: None)
+
+    thread.run()
+
+    assert client.attempts == 2
+    assert responses[0].state == "recording_av"
+
+
+def test_worker_command_failure_and_stale_initial_status_do_not_override_recording(
+    qtbot: pytest.QtBot,
+) -> None:
+    window = MainWindow()
+    qtbot.addWidget(window)
+    recording = Response(Command.START, str(uuid.uuid4()), "recording_av", True)
+    window._worker_status_completed(recording)
+    assert window.setup_page.start_button.text() == "Stop safely"
+
+    window._worker_command_thread = object()  # type: ignore[assignment]
+    window._initial_worker_status_completed(
+        Response(Command.STATUS, str(uuid.uuid4()), "idle", True)
+    )
+    window._initial_worker_status_failed("missing")
+    assert window.setup_page.start_button.text() == "Stop safely"
+
+    window._worker_command_thread = None
+    window._worker_command_failed("manager unavailable")
+    assert window.setup_page.start_button.text() == "Start"
+    assert "manager unavailable" in window.statusBar().currentMessage()

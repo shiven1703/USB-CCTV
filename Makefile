@@ -27,9 +27,9 @@ audit:
 	uv run pip-audit --strict --requirement /tmp/usb-cctv-recorder-audit.txt
 
 package:
-	uv build
+	UV_CACHE_DIR=/tmp/usb-cctv-uv-cache uv run python scripts/build_deb.py
 
 verify-package: package
-	uv run python -m zipfile -t dist/*.whl
+	UV_CACHE_DIR=/tmp/usb-cctv-uv-cache uv run python scripts/verify_package.py dist/usb-cctv-recorder_*_amd64.deb
 
 ci: lint typecheck test test-integration test-faults audit package verify-package
