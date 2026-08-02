@@ -128,3 +128,37 @@ class PowerStatus:
     protection: PowerProtectionState
     source: PowerSource
     battery_percent: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryFilter:
+    """Optional catalogue filters; empty values deliberately mean all records."""
+
+    date: str | None = None
+    session_id: str | None = None
+    media_class: str | None = None
+    protected: bool | None = None
+    validation_state: str | None = None
+    gap_state: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryItem:
+    item_id: str
+    kind: str
+    session_id: str
+    media_class: str
+    file_path: str | None
+    started_at: str
+    duration_seconds: float | None
+    protected: bool
+    validation_state: str
+    gap_state: str
+    segment_state: str | None
+    error_state: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class LibraryDetails:
+    item: LibraryItem
+    facts: tuple[tuple[str, str], ...]

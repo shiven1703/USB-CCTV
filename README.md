@@ -1,7 +1,7 @@
 # USB CCTV Recorder
 
 USB CCTV Recorder is a local desktop recorder for one USB camera and microphone on
-Ubuntu/KDE. It is being implemented in phases. Phase 7 adds watchdog recovery to the
+Ubuntu/KDE. It is being implemented in phases. Phases 7 and 8 add watchdog recovery and a
 on-demand systemd user
 worker boundary: a current-user-only Unix socket under `$XDG_RUNTIME_DIR/usb-cctv-recorder/`,
 versioned closed commands (`status`, `start`, `stop`, `retry`, and `force_stop`), and a GUI
@@ -19,9 +19,12 @@ the worker safely stops and finalizes the active segment. During capture it moni
 events, video/audio progress, and output growth. A failure records a monotonic gap, finalizes or
 quarantines the interrupted file, and starts a new AV, audio-only, or video-only segment after the
 2/5/10/30/60-second retry schedule. Status exposes health, recovery, and a closed-protocol
-**Retry now** action. Library, archive, retention, and package installation remain deferred.
+**Retry now** action. Manual archive transactions, retention, and package installation remain deferred.
 Phase 4 uses the runtime-proven `libx264` software fallback; hardware and HEVC encoder
-selection are not implemented.
+selection are not implemented. Phase 8 adds a paged Library tab for original, archive, gap, and
+quarantined records. It displays damaged and missing files as diagnostics, supports durable
+protect/unprotect and re-verification through the catalogue, and uses Qt's read-only media player
+for original/archive playback. Playback never repairs, remuxes, or rewrites evidence.
 
 ## Development
 
@@ -41,3 +44,11 @@ uv run usb-cctv-recorder --record --media-root /absolute/media/root \
 ```
 
 For CI-only synthetic media, use `--synthetic-duration-seconds`; it never opens hardware.
+
+Rebuild only the derived SQLite catalogue from existing media and manifests with:
+
+```text
+uv run usb-cctv-recorder --rebuild-catalogue --media-root /absolute/media/root
+```
+
+This command does not modify media bytes or manifests.

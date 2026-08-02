@@ -83,6 +83,20 @@ def test_worker_cli_mode_starts_the_on_demand_worker(monkeypatch: pytest.MonkeyP
     assert __main__.main(["--worker"]) == 0
 
 
+def test_catalogue_rebuild_cli_requires_an_absolute_media_root(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rebuilt: list[Path] = []
+    monkeypatch.setattr(__main__, "rebuild_catalogue", rebuilt.append)
+
+    assert __main__.main(["--rebuild-catalogue", "--media-root", str(tmp_path)]) == 0
+    assert rebuilt == [tmp_path]
+    with pytest.raises(ValueError, match="media-root"):
+        __main__.main(["--rebuild-catalogue"])
+    with pytest.raises(ValueError, match="absolute"):
+        __main__.main(["--rebuild-catalogue", "--media-root", "relative"])
+
+
 def test_development_cli_runs_a_synthetic_recording(tmp_path: Path) -> None:
     assert (
         __main__.main(

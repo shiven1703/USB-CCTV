@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 
 from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
-from usb_cctv_recorder.application.dto import AudioSource, PowerStatus, VideoDevice
+from usb_cctv_recorder.application.dto import (
+    AudioSource,
+    LibraryDetails,
+    LibraryFilter,
+    LibraryItem,
+    PowerStatus,
+    VideoDevice,
+)
 from usb_cctv_recorder.domain.entities import ArchiveJob, ComponentHealth, RecordingSession, Segment
 from usb_cctv_recorder.domain.value_objects import MonotonicDuration, SessionId, UtcTimestamp
 
@@ -72,6 +79,22 @@ class SystemServicePort(Protocol):
 
 class WorkerConfigurationPort(Protocol):
     def save(self, configuration: WorkerRecordingConfiguration) -> None: ...
+
+
+class LibraryCataloguePort(Protocol):
+    """Browse and mutate catalogue facts without exposing SQLite to the UI."""
+
+    def rebuild(self, media_root: Path) -> int: ...
+
+    def count(self, filters: LibraryFilter) -> int: ...
+
+    def page(self, filters: LibraryFilter, offset: int, limit: int) -> tuple[LibraryItem, ...]: ...
+
+    def details(self, item_id: str) -> LibraryDetails: ...
+
+    def set_protected(self, item_id: str, protected: bool) -> LibraryItem: ...
+
+    def reverify(self, item_id: str) -> LibraryItem: ...
 
 
 class EventJournalPort(Protocol):

@@ -75,4 +75,30 @@ def _drop_catalogue(connection: sqlite3.Connection) -> None:
     )
 
 
-MIGRATIONS: tuple[Migration, ...] = (Migration(1, _create_catalogue, _drop_catalogue),)
+def _create_recovery_gaps(connection: sqlite3.Connection) -> None:
+    connection.executescript(
+        """
+        CREATE TABLE recording_gaps (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            reason TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            duration_seconds REAL,
+            attempts INTEGER NOT NULL,
+            last_good_video_monotonic REAL,
+            last_good_audio_monotonic REAL
+        );
+        CREATE INDEX recording_gaps_session_id_index ON recording_gaps(session_id);
+        """
+    )
+
+
+def _drop_recovery_gaps(connection: sqlite3.Connection) -> None:
+    connection.execute("DROP TABLE IF EXISTS recording_gaps")
+
+
+MIGRATIONS: tuple[Migration, ...] = (
+    Migration(1, _create_catalogue, _drop_catalogue),
+    Migration(2, _create_recovery_gaps, _drop_recovery_gaps),
+)

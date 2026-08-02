@@ -6,7 +6,7 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
-from .bootstrap import run_gui
+from .bootstrap import rebuild_catalogue, run_gui
 from .worker.main import run_worker
 
 
@@ -14,6 +14,11 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     """Parse the deliberately small public command-line surface."""
     parser = argparse.ArgumentParser(prog="usb-cctv-recorder")
     parser.add_argument("--worker", action="store_true", help="run the on-demand worker")
+    parser.add_argument(
+        "--rebuild-catalogue",
+        action="store_true",
+        help="rebuild derived browse state from media and manifests without changing media bytes",
+    )
     parser.add_argument(
         "--record", action="store_true", help="run one foreground development recording"
     )
@@ -33,6 +38,13 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
 def main(arguments: Sequence[str] | None = None) -> int:
     """Run either the GUI or worker process."""
     parsed = parse_args(arguments)
+    if parsed.rebuild_catalogue:
+        if parsed.media_root is None:
+            raise ValueError("--media-root is required with --rebuild-catalogue")
+        if not parsed.media_root.is_absolute():
+            raise ValueError("--media-root must be absolute")
+        rebuild_catalogue(parsed.media_root)
+        return 0
     if parsed.record:
         if parsed.media_root is None:
             raise ValueError("--media-root is required with --record")

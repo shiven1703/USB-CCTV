@@ -19,7 +19,9 @@ class SQLiteCatalogue:
 
     def __init__(self, database_path: Path) -> None:
         database_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        self.connection = sqlite3.connect(database_path)
+        # Presentation queries run in short-lived Qt worker threads. This adapter serializes
+        # evidence operations at its callers; SQLite's connection must permit that hand-off.
+        self.connection = sqlite3.connect(database_path, check_same_thread=False)
         self.connection.execute("PRAGMA foreign_keys = ON")
         self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.execute("PRAGMA synchronous = FULL")
