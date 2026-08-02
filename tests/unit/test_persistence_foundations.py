@@ -39,9 +39,19 @@ def test_sqlite_migrates_forward_and_rolls_back(tmp_path: Path) -> None:
     try:
         assert catalogue.current_version() == 0
         catalogue.migrate()
-        assert catalogue.current_version() == 1
+        assert catalogue.current_version() == 4
         tables = {row[0] for row in catalogue.connection.execute("SELECT name FROM sqlite_master")}
-        assert {"sessions", "segments", "archive_jobs"} <= tables
+        assert {"sessions", "segments", "archive_jobs", "recording_gaps"} <= tables
+        columns = {
+            row[1] for row in catalogue.connection.execute("PRAGMA table_info(archive_jobs)")
+        }
+        assert {"source_path", "destination_path", "profile", "failure_detail"} <= columns
+        catalogue.rollback_last()
+        assert catalogue.current_version() == 3
+        catalogue.rollback_last()
+        assert catalogue.current_version() == 2
+        catalogue.rollback_last()
+        assert catalogue.current_version() == 1
         catalogue.rollback_last()
         assert catalogue.current_version() == 0
         tables = {row[0] for row in catalogue.connection.execute("SELECT name FROM sqlite_master")}

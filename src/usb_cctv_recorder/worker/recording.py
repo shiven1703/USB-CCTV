@@ -15,6 +15,7 @@ from usb_cctv_recorder.domain.states import SessionState
 from usb_cctv_recorder.domain.value_objects import SegmentId, SessionId, UtcTimestamp
 from usb_cctv_recorder.infrastructure.commands.runner import StructuredCommandRunner
 from usb_cctv_recorder.infrastructure.ffmpeg.process import FfmpegProcess, ProcessResult
+from usb_cctv_recorder.infrastructure.ffmpeg.progress_parser import ProgressSnapshot
 from usb_cctv_recorder.infrastructure.ffmpeg.verifier import FfprobeVerifier, MediaVerificationError
 from usb_cctv_recorder.infrastructure.persistence.event_journal import (
     JournalEvent,
@@ -49,6 +50,9 @@ class HeadlessRecordingController:
         command_factory: Callable[[Path], tuple[str, ...]],
         *,
         process: FfmpegProcess | None = None,
+        emergency_command_factories: dict[SessionState, Callable[[Path], tuple[str, ...]]]
+        | None = None,
+        process_factory: Callable[[], FfmpegProcess] | None = None,
         verifier: FfprobeVerifier | None = None,
         checksums: Sha256Service | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -57,8 +61,10 @@ class HeadlessRecordingController:
             raise ValueError("media root must be absolute")
         self._media_root = media_root
         self._command_factory = command_factory
+        self._emergency_command_factories = emergency_command_factories or {}
         self._arguments: tuple[str, ...] = ()
         self._process = process or FfmpegProcess()
+        self._process_factory = process_factory or FfmpegProcess
         self._verifier = verifier or FfprobeVerifier()
         self._checksums = checksums or Sha256Service()
         self._clock = clock or (lambda: datetime.now().astimezone())
@@ -68,6 +74,8 @@ class HeadlessRecordingController:
         self._journal: JsonlEventJournal | None = None
         self._manifest: SessionManifest | None = None
         self._verified_names: set[str] = set()
+        self._generation = 0
+        self._capture_state = SessionState.RECORDING_AV
 
     @property
     def manifest(self) -> SessionManifest:
@@ -88,30 +96,98 @@ class HeadlessRecordingController:
         session_id = SessionId.new()
         directory = self._create_session_directory(now)
         self._directory = directory
-        self._arguments = self._command_factory(directory / "segment-%06d.mkv")
         self._journal = JsonlEventJournal(directory / "events.jsonl")
         self._session = RecordingSession(session_id, SessionState.IDLE, now)
         self._move_session(SessionState.PREFLIGHT)
         self._move_session(SessionState.STARTING)
         self._manifest = SessionManifest(session_id, SessionState.STARTING, now, now)
         self._save_manifest()
+        try:
+            self._start_process(SessionState.RECORDING_AV)
+        except Exception as error:
+            self._fail(f"FFmpeg start failed: {error}")
+            raise RecordingFailure("FFmpeg could not be started") from error
         self._append_event("session_starting", {"arguments": list(self._arguments)})
         self._write_diagnostic("ffmpeg_arguments=" + repr(self._arguments))
         self._write_diagnostic("ffmpeg=" + self._executable_diagnostic("ffmpeg"))
         self._write_diagnostic("ffprobe=" + self._executable_diagnostic("ffprobe"))
-        try:
-            self._process.start(self._arguments)
-        except Exception as error:
-            self._fail(f"FFmpeg start failed: {error}")
-            raise RecordingFailure("FFmpeg could not be started") from error
         self._move_session(SessionState.RECORDING_AV)
         self._save_manifest()
         self._append_event("session_started", {"mode": "video_audio"})
         return StartedRecording(session_id, directory, self._arguments)
 
+    @property
+    def progress(self) -> ProgressSnapshot | None:
+        return self._process.progress
+
+    @property
+    def is_running(self) -> bool:
+        return self._process.is_running()
+
+    def active_output_bytes(self) -> int | None:
+        """Return current output growth only; a file existing is not a health verdict."""
+        candidates = sorted(self.session_directory.glob("*.mkv"))
+        if not candidates:
+            return None
+        try:
+            return max(path.stat().st_size for path in candidates)
+        except OSError:
+            return None
+
+    def begin_recovery(self, reason: str) -> bool:
+        """Close the active process and preserve or quarantine its last segment."""
+        self._require_started()
+        if self._session is None:
+            raise AssertionError("session unexpectedly absent")
+        if self._session.state not in {
+            SessionState.RECORDING_AV,
+            SessionState.RECORDING_AUDIO_ONLY,
+            SessionState.RECORDING_VIDEO_ONLY,
+            SessionState.DEGRADED,
+        }:
+            return False
+        self._append_event("recovery_interruption_requested", {"reason": reason})
+        result = self._process.stop()
+        self._move_session(SessionState.RECOVERING)
+        self._finalize_closed_segments(
+            include_active=True,
+            expect_video=self._capture_state is not SessionState.RECORDING_AUDIO_ONLY,
+            expect_audio=self._capture_state is not SessionState.RECORDING_VIDEO_ONLY,
+            interrupted=True,
+        )
+        if result.forced_kill:
+            self._append_event("recovery_interruption_forced", {"reason": reason})
+        self._save_manifest()
+        return True
+
+    def resume_after_recovery(self, capture_state: SessionState) -> None:
+        """Start a distinct segment family after a recorded gap; never append."""
+        self._require_started()
+        if self._session is None or self._session.state is not SessionState.RECOVERING:
+            raise RecordingFailure("recording is not awaiting recovery")
+        if capture_state not in {
+            SessionState.RECORDING_AV,
+            SessionState.RECORDING_AUDIO_ONLY,
+            SessionState.RECORDING_VIDEO_ONLY,
+        }:
+            raise ValueError("recovery capture state must contain at least one stream")
+        self._generation += 1
+        self._process = self._process_factory()
+        try:
+            self._start_process(capture_state)
+        except Exception as error:
+            self._append_event("recovery_start_failed", {"reason": str(error)})
+            raise RecordingFailure("FFmpeg recovery start failed") from error
+        self._move_session(capture_state)
+        self._append_event("recovery_segment_started", {"mode": capture_state.value})
+
     def poll(self) -> ProcessResult | None:
         self._require_started()
-        self._finalize_closed_segments(include_active=not self._process.is_running())
+        self._finalize_closed_segments(
+            include_active=not self._process.is_running(),
+            expect_video=self._capture_state is not SessionState.RECORDING_AUDIO_ONLY,
+            expect_audio=self._capture_state is not SessionState.RECORDING_VIDEO_ONLY,
+        )
         if self._process.is_running():
             return None
         result = self._process.wait()
@@ -129,14 +205,24 @@ class HeadlessRecordingController:
         self._require_started()
         if self._session is None:
             raise AssertionError("session unexpectedly absent")
-        if self._session.state == SessionState.RECORDING_AV:
+        if self._session.state in {
+            SessionState.RECORDING_AV,
+            SessionState.RECORDING_AUDIO_ONLY,
+            SessionState.RECORDING_VIDEO_ONLY,
+            SessionState.DEGRADED,
+            SessionState.RECOVERING,
+        }:
             self._move_session(SessionState.STOPPING)
         self._append_event("stop_requested", {"reason": reason})
         result = self._process.stop(graceful_timeout_seconds)
         self._move_session(SessionState.FINALIZING)
         self._save_manifest(stop_reason=reason)
         try:
-            self._finalize_closed_segments(include_active=True)
+            self._finalize_closed_segments(
+                include_active=True,
+                expect_video=self._capture_state is not SessionState.RECORDING_AUDIO_ONLY,
+                expect_audio=self._capture_state is not SessionState.RECORDING_VIDEO_ONLY,
+            )
         except RecordingFailure:
             raise
         if result.forced_kill:
@@ -166,10 +252,18 @@ class HeadlessRecordingController:
         if poll_seconds <= 0:
             raise ValueError("poll interval must be positive")
         while self._process.is_running():
-            self._finalize_closed_segments(include_active=False)
+            self._finalize_closed_segments(
+                include_active=False,
+                expect_video=self._capture_state is not SessionState.RECORDING_AUDIO_ONLY,
+                expect_audio=self._capture_state is not SessionState.RECORDING_VIDEO_ONLY,
+            )
             time.sleep(poll_seconds)
         result = self._process.wait()
-        self._finalize_closed_segments(include_active=True)
+        self._finalize_closed_segments(
+            include_active=True,
+            expect_video=self._capture_state is not SessionState.RECORDING_AUDIO_ONLY,
+            expect_audio=self._capture_state is not SessionState.RECORDING_VIDEO_ONLY,
+        )
         if result.returncode != 0:
             self._fail(f"FFmpeg exited unexpectedly with return code {result.returncode}")
             raise RecordingFailure(self.manifest.failure_reason or "FFmpeg exited unexpectedly")
@@ -181,17 +275,29 @@ class HeadlessRecordingController:
         self._append_event("session_stopped", {"returncode": result.returncode})
         return result
 
-    def _finalize_closed_segments(self, *, include_active: bool) -> None:
-        candidates = sorted(self.session_directory.glob("segment-*.mkv"))
+    def _finalize_closed_segments(
+        self,
+        *,
+        include_active: bool,
+        expect_video: bool,
+        expect_audio: bool,
+        interrupted: bool = False,
+    ) -> None:
+        candidates = sorted(self.session_directory.glob("*.mkv"))
         if not include_active and candidates:
             candidates.pop()
         for path in candidates:
             if path.name in self._verified_names:
                 continue
             try:
-                verified = self._verifier.verify(path)
+                verified = self._verifier.verify(
+                    path, expect_video=expect_video, expect_audio=expect_audio
+                )
                 digest = self._checksums.digest_file(path)
             except (MediaVerificationError, OSError) as error:
+                if interrupted:
+                    self._quarantine_interrupted(path, str(error))
+                    continue
                 self._fail(f"segment verification failed for {path.name}: {error}")
                 raise RecordingFailure(
                     self.manifest.failure_reason or "segment verification failed"
@@ -204,7 +310,7 @@ class HeadlessRecordingController:
                 segment_ids=self.manifest.segment_ids + (segment_id,),
             )
             self._append_event(
-                "segment_finalized",
+                "segment_interrupted_verified" if interrupted else "segment_finalized",
                 {
                     "segment_id": segment_id,
                     "filename": path.name,
@@ -214,6 +320,40 @@ class HeadlessRecordingController:
                     "audio_codec": verified.audio_codec,
                 },
             )
+
+    def _quarantine_interrupted(self, path: Path, reason: str) -> None:
+        destination = self._media_root / "quarantine" / str(self.manifest.session_id) / path.name
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        try:
+            os.replace(path, destination)
+        except OSError as error:
+            self._append_event(
+                "segment_quarantine_failed",
+                {"filename": path.name, "reason": reason, "error": str(error)},
+            )
+            return
+        self._append_event(
+            "segment_quarantined",
+            {"filename": path.name, "quarantine_path": str(destination), "reason": reason},
+        )
+
+    def _start_process(self, capture_state: SessionState) -> None:
+        factory: Callable[[Path], tuple[str, ...]]
+        if capture_state is SessionState.RECORDING_AV:
+            factory = self._command_factory
+        else:
+            emergency_factory = self._emergency_command_factories.get(capture_state)
+            if emergency_factory is None:
+                raise RecordingFailure(f"{capture_state.value} recovery is unavailable")
+            factory = emergency_factory
+        pattern = (
+            self.session_directory / "segment-%06d.mkv"
+            if self._generation == 0
+            else self.session_directory / f"recovery-{self._generation:03d}-%06d.mkv"
+        )
+        self._arguments = factory(pattern)
+        self._process.start(self._arguments)
+        self._capture_state = capture_state
 
     def _create_session_directory(self, now: UtcTimestamp) -> Path:
         local = now.value.astimezone()

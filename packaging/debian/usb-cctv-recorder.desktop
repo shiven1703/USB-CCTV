@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.5
+Type=Application
+Name=USB CCTV Recorder
+Comment=Record a local USB camera and microphone
+TryExec=usb-cctv-recorder
+Exec=usb-cctv-recorder
+Icon=usb-cctv-recorder
+Categories=AudioVideo;Video;Recorder;
+Terminal=false
+StartupNotify=true

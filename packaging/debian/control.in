@@ -1,0 +1,11 @@
+Package: usb-cctv-recorder
+Version: {version}
+Section: video
+Priority: optional
+Architecture: amd64
+Maintainer: USB CCTV Recorder contributors
+Depends: {shlibs_depends}, ffmpeg, pulseaudio-utils, v4l-utils, systemd
+Description: Local USB camera and microphone recorder for KDE
+ USB CCTV Recorder is a local, evidence-conscious recorder for one USB camera
+ and microphone. It includes its Python and PySide runtime in a PyInstaller
+ one-folder bundle and uses the logged-in user's on-demand systemd worker.

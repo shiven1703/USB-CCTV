@@ -15,6 +15,3 @@ RuntimeDirectory=usb-cctv-recorder
 RuntimeDirectoryMode=0700
 UMask=0077
 NoNewPrivileges=yes
-
-[Install]
-WantedBy=default.target

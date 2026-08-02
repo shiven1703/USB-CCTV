@@ -36,6 +36,7 @@ def test_user_service_has_bounded_failure_restart_and_private_runtime_directory(
     assert "StartLimitIntervalSec=60" in unit and "StartLimitBurst=3" in unit
     assert "RuntimeDirectory=usb-cctv-recorder" in unit and "RuntimeDirectoryMode=0700" in unit
     assert "UMask=0077" in unit
+    assert "[Install]" not in unit
 
 
 def test_service_adapter_uses_structured_systemctl_and_surfaces_manager_failures() -> None:
@@ -45,6 +46,7 @@ def test_service_adapter_uses_structured_systemctl_and_surfaces_manager_failures
     service.start_worker()
     service.stop_worker()
     assert runner.calls == [
+        ("systemctl", "--user", "daemon-reload"),
         ("systemctl", "--user", "start", UNIT_NAME),
         ("systemctl", "--user", "stop", UNIT_NAME),
     ]

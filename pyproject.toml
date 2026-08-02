@@ -22,9 +22,11 @@ dev = [
     "coverage==7.6.12",
     "mypy==1.15.0",
     "pip-audit==2.8.0",
+    "pyinstaller==6.21.0",
     "pytest==9.0.3",
     "pytest-cov==6.0.0",
     "pytest-qt==4.4.0",
+    "pyinstaller==6.21.0",
     "ruff==0.9.10",
 ]
 

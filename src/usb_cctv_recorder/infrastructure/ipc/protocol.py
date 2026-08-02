@@ -63,6 +63,14 @@ class Response:
     power_protection: str = "inactive"
     power_source: str = "unknown"
     battery_percent: int | None = None
+    video_health: str = "unknown"
+    audio_health: str = "unknown"
+    output_health: str = "unknown"
+    worker_heartbeat_age_seconds: float = 0.0
+    recovery_attempt: int = 0
+    retry_in_seconds: float | None = None
+    last_gap_seconds: float | None = None
+    recovery_reason: str | None = None
 
     @classmethod
     def parse(cls, value: object) -> Response:
@@ -80,6 +88,14 @@ class Response:
                 "power_protection",
                 "power_source",
                 "battery_percent",
+                "video_health",
+                "audio_health",
+                "output_health",
+                "worker_heartbeat_age_seconds",
+                "recovery_attempt",
+                "retry_in_seconds",
+                "last_gap_seconds",
+                "recovery_reason",
             },
             "response",
         )
@@ -98,12 +114,26 @@ class Response:
                 _string(fields[name], name)
         for name in ("power_protection", "power_source"):
             _string(fields[name], name)
+        for name in ("video_health", "audio_health", "output_health"):
+            _string(fields[name], name)
         if fields["battery_percent"] is not None and (
             not isinstance(fields["battery_percent"], int)
             or isinstance(fields["battery_percent"], bool)
             or not 0 <= fields["battery_percent"] <= 100
         ):
             raise ProtocolError("battery_percent must be an integer from 0 to 100")
+        _nonnegative_number(fields["worker_heartbeat_age_seconds"], "worker_heartbeat_age_seconds")
+        if (
+            not isinstance(fields["recovery_attempt"], int)
+            or isinstance(fields["recovery_attempt"], bool)
+            or fields["recovery_attempt"] < 0
+        ):
+            raise ProtocolError("recovery_attempt must be a non-negative integer")
+        for name in ("retry_in_seconds", "last_gap_seconds"):
+            if fields[name] is not None:
+                _nonnegative_number(fields[name], name)
+        if fields["recovery_reason"] is not None:
+            _string(fields["recovery_reason"], "recovery_reason")
         return cls(
             command,
             command_id,
@@ -114,6 +144,14 @@ class Response:
             fields["power_protection"],
             fields["power_source"],
             fields["battery_percent"],
+            fields["video_health"],
+            fields["audio_health"],
+            fields["output_health"],
+            float(fields["worker_heartbeat_age_seconds"]),
+            fields["recovery_attempt"],
+            None if fields["retry_in_seconds"] is None else float(fields["retry_in_seconds"]),
+            None if fields["last_gap_seconds"] is None else float(fields["last_gap_seconds"]),
+            fields["recovery_reason"],
         )
 
     def to_mapping(self) -> dict[str, object]:
@@ -128,6 +166,14 @@ class Response:
             "power_protection": self.power_protection,
             "power_source": self.power_source,
             "battery_percent": self.battery_percent,
+            "video_health": self.video_health,
+            "audio_health": self.audio_health,
+            "output_health": self.output_health,
+            "worker_heartbeat_age_seconds": self.worker_heartbeat_age_seconds,
+            "recovery_attempt": self.recovery_attempt,
+            "retry_in_seconds": self.retry_in_seconds,
+            "last_gap_seconds": self.last_gap_seconds,
+            "recovery_reason": self.recovery_reason,
         }
 
 
@@ -187,3 +233,8 @@ def _canonical_command_id(value: str) -> None:
         raise ProtocolError("command_id must be a UUID") from error
     if str(parsed_id) != value:
         raise ProtocolError("command_id must be a canonical UUID")
+
+
+def _nonnegative_number(value: object, name: str) -> None:
+    if not isinstance(value, int | float) or isinstance(value, bool) or value < 0:
+        raise ProtocolError(f"{name} must be a non-negative number")

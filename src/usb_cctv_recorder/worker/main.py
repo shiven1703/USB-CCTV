@@ -9,7 +9,10 @@ from pathlib import Path
 
 from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
 from usb_cctv_recorder.application.dto import CaptureMode
+from usb_cctv_recorder.application.storage import StorageGovernorService, StoragePolicy
+from usb_cctv_recorder.domain.states import SessionState
 from usb_cctv_recorder.infrastructure.configuration import WorkerConfigurationStore, XdgPaths
+from usb_cctv_recorder.infrastructure.devices.hotplug import UdevVideoHotplugMonitor
 from usb_cctv_recorder.infrastructure.ffmpeg.command_builder import (
     CameraCapture,
     FfmpegRecordingCommandBuilder,
@@ -18,8 +21,12 @@ from usb_cctv_recorder.infrastructure.ffmpeg.command_builder import (
     build_synthetic_recording_command,
 )
 from usb_cctv_recorder.infrastructure.ipc.server import UnixSocketServer
+from usb_cctv_recorder.infrastructure.persistence.library_catalogue import SQLiteLibraryCatalogue
+from usb_cctv_recorder.infrastructure.persistence.sqlite import SQLiteCatalogue
 from usb_cctv_recorder.infrastructure.power.inhibitor import SystemdInhibitAdapter
 from usb_cctv_recorder.infrastructure.power.power_status import LinuxPowerStatusAdapter
+from usb_cctv_recorder.infrastructure.storage.archive_transaction import ArchiveTransactionManager
+from usb_cctv_recorder.infrastructure.storage.governor import FilesystemStorageGovernor
 
 from .recording import HeadlessRecordingController, RecordingFailure
 from .supervisor import WorkerSupervisor
@@ -43,12 +50,53 @@ def run_ipc_worker(
         except AttributeError:
             # Lightweight socket harnesses need only a runtime directory.
             configuration = None
+        storage_service: StorageGovernorService | None = None
+        estimated_segment_bytes = 0
+        if configuration is not None:
+            catalogue = SQLiteLibraryCatalogue(
+                SQLiteCatalogue(runtime_paths.state / "catalogue.sqlite")
+            )
+            archive_manager = ArchiveTransactionManager(catalogue)
+            policy = StoragePolicy(
+                configured_cap_bytes=configuration.configured_storage_cap_bytes,
+                operating_system_reserve_bytes=configuration.operating_system_reserve_bytes,
+                emergency_finalization_reserve_bytes=(
+                    configuration.emergency_finalization_reserve_bytes
+                ),
+            )
+            catalogue_path = runtime_paths.state / "catalogue.sqlite"
+            governor = FilesystemStorageGovernor(
+                configuration.media_root,
+                catalogue,
+                archive_manager,
+                policy,
+                metadata_paths=(
+                    catalogue_path,
+                    catalogue_path.with_name("catalogue.sqlite-wal"),
+                    catalogue_path.with_name("catalogue.sqlite-shm"),
+                ),
+            )
+            archive_manager.set_storage_reserve_checker(
+                lambda required: not governor.ensure_working_reserve(
+                    required, recording_active=False
+                ).remaining_bytes_needed
+            )
+            storage_service = StorageGovernorService(governor)
+            estimated_segment_bytes = round(
+                policy.fallback_original_bytes_per_hour
+                * configuration.segment_duration_minutes
+                / 60
+            )
         active_supervisor = WorkerSupervisor(
             _recording_factory(configuration),
             inhibitor=SystemdInhibitAdapter(),
             power_status=LinuxPowerStatusAdapter(),
             prevent_suspend=configuration.prevent_suspend if configuration is not None else True,
             block_lid_close=configuration.block_lid_close if configuration is not None else False,
+            hotplug_monitor=UdevVideoHotplugMonitor() if configuration is not None else None,
+            camera_identity=configuration.camera_identity if configuration is not None else None,
+            storage_governor=storage_service,
+            estimated_segment_bytes=estimated_segment_bytes,
         )
     else:
         active_supervisor = supervisor
@@ -93,34 +141,48 @@ def _configured_controller(
     configuration: WorkerRecordingConfiguration,
 ) -> HeadlessRecordingController:
     persistent = Path(configuration.camera_identity)
-    resolved = persistent.resolve(strict=True)
 
-    def command_factory(output_pattern: Path) -> tuple[str, ...]:
-        return FfmpegRecordingCommandBuilder().build(
-            RecordingSettings(
-                camera=CameraCapture(
-                    configuration.camera_identity,
-                    resolved,
-                    CaptureMode(
-                        "MJPG",
-                        "Motion-JPEG",
-                        configuration.width,
-                        configuration.height,
-                        configuration.input_frame_rate,
-                    ),
-                ),
-                microphone_source=configuration.microphone_source,
-                output_profile=OutputProfile(
+    def settings(output_pattern: Path) -> RecordingSettings:
+        # Resolve this selected stable alias for every initial and recovery attempt.
+        resolved = persistent.resolve(strict=True)
+        return RecordingSettings(
+            camera=CameraCapture(
+                configuration.camera_identity,
+                resolved,
+                CaptureMode(
+                    "MJPG",
+                    "Motion-JPEG",
                     configuration.width,
                     configuration.height,
-                    configuration.output_frame_rate,
+                    configuration.input_frame_rate,
                 ),
-                segment_seconds=configuration.segment_duration_minutes * 60,
-                output_pattern=output_pattern,
-            )
+            ),
+            microphone_source=configuration.microphone_source,
+            output_profile=OutputProfile(
+                configuration.width,
+                configuration.height,
+                configuration.output_frame_rate,
+            ),
+            segment_seconds=configuration.segment_duration_minutes * 60,
+            output_pattern=output_pattern,
         )
 
-    return HeadlessRecordingController(configuration.media_root, command_factory)
+    def command_factory(output_pattern: Path) -> tuple[str, ...]:
+        return FfmpegRecordingCommandBuilder().build(settings(output_pattern))
+
+    builder = FfmpegRecordingCommandBuilder()
+    return HeadlessRecordingController(
+        configuration.media_root,
+        command_factory,
+        emergency_command_factories={
+            SessionState.RECORDING_AUDIO_ONLY: lambda output: builder.build_for_streams(
+                settings(output), include_video=False, include_audio=True
+            ),
+            SessionState.RECORDING_VIDEO_ONLY: lambda output: builder.build_for_streams(
+                settings(output), include_video=True, include_audio=False
+            ),
+        },
+    )
 
 
 def run_worker(

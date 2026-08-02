@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+# Replacing or removing the frozen executable while its worker is recording is
+# unsafe. Require a normal safe stop first; no user data is removed here.
+if [ "${1:-}" = remove ] || [ "${1:-}" = upgrade ]; then
+    if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+        uid="$(id -u "$SUDO_USER")"
+        runtime_directory="/run/user/$uid"
+        if [ -S "$runtime_directory/bus" ] && runuser -u "$SUDO_USER" -- env \
+            XDG_RUNTIME_DIR="$runtime_directory" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime_directory/bus" \
+            systemctl --user is-active --quiet usb-cctv-recorder-worker.service; then
+            echo "USB CCTV Recorder worker is active; stop recording safely before $1." >&2
+            exit 1
+        fi
+    fi
+fi
