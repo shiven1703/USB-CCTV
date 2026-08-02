@@ -8,6 +8,7 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QMainWindow, QPushButton, QTabWidget
 
+from usb_cctv_recorder.application.archive import ArchiveService
 from usb_cctv_recorder.application.dto import DeviceDiscovery
 from usb_cctv_recorder.application.library import LibraryService
 from usb_cctv_recorder.application.ports import WorkerConfigurationPort
@@ -15,6 +16,7 @@ from usb_cctv_recorder.application.preflight import PreflightService
 from usb_cctv_recorder.infrastructure.ipc.client import UnixSocketClient
 from usb_cctv_recorder.infrastructure.ipc.protocol import Command, Request, Response
 
+from .pages.archive_page import ArchivePage
 from .pages.library_page import LibraryPage
 from .pages.setup_page import SetupPage
 
@@ -90,18 +92,27 @@ class MainWindow(QMainWindow):
         worker_configuration: WorkerConfigurationPort | None = None,
         library_service: LibraryService | None = None,
         library_media_root: Path | None = None,
+        archive_service: ArchiveService | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("USB CCTV Recorder")
         self.setup_page = SetupPage(preflight_service, worker_configuration=worker_configuration)
         self.library_page: LibraryPage | None = None
-        if library_service is None or library_media_root is None:
+        self.archive_page: ArchivePage | None = None
+        if library_service is None or library_media_root is None or archive_service is None:
             self.setCentralWidget(self.setup_page)
         else:
             tabs = QTabWidget()
             tabs.addTab(self.setup_page, "Setup")
-            self.library_page = LibraryPage(library_service, library_media_root)
+            self.archive_page = ArchivePage(archive_service, library_media_root)
+            self.library_page = LibraryPage(
+                library_service,
+                library_media_root,
+                self.archive_page.set_library_selection,
+                archive_service,
+            )
             tabs.addTab(self.library_page, "Library")
+            tabs.addTab(self.archive_page, "Archive")
             self.setCentralWidget(tabs)
         self._probe_thread: DeviceProbeThread | None = None
         self._worker_status_thread: WorkerStatusThread | None = None

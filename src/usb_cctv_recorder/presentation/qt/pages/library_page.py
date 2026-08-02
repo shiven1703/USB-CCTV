@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from usb_cctv_recorder.application.archive import ArchiveService
 from usb_cctv_recorder.application.dto import LibraryDetails, LibraryFilter, LibraryItem
 from usb_cctv_recorder.application.library import LibraryService
 
@@ -103,13 +104,21 @@ class _LibraryDetailsThread(QThread):
 class LibraryPage(QWidget):
     """Qt is a catalogue client and media reader; it never owns authoritative files."""
 
-    def __init__(self, service: LibraryService, media_root: Path) -> None:
+    def __init__(
+        self,
+        service: LibraryService,
+        media_root: Path,
+        archive_selection_consumer: Callable[[tuple[str, ...]], None] | None = None,
+        archive_service: ArchiveService | None = None,
+    ) -> None:
         super().__init__()
         self._service = service
         self._media_root = media_root
         self._load_thread: _LibraryLoadThread | None = None
         self._action_thread: _LibraryActionThread | None = None
         self._details_thread: _LibraryDetailsThread | None = None
+        self._archive_selection_consumer = archive_selection_consumer
+        self._archive_service = archive_service
         self.model = LibraryTableModel()
         self.model.request_more.connect(self._load_more)
 
@@ -134,6 +143,7 @@ class LibraryPage(QWidget):
         self.table = QTableView()
         self.table.setModel(self.model)
         self.table.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableView.SelectionMode.ExtendedSelection)
         self.table.selectionModel().currentRowChanged.connect(self._selected)
         self.details = QPlainTextEdit()
         self.details.setReadOnly(True)
@@ -142,6 +152,9 @@ class LibraryPage(QWidget):
         self.unprotect_button = QPushButton("Unprotect")
         self.folder_button = QPushButton("Open containing folder")
         self.reverify_button = QPushButton("Re-verify integrity")
+        self.archive_button = QPushButton("Archive selected")
+        self.move_active_button = QPushButton("Move archive to active library (quality unchanged)")
+        self.share_copy_button = QPushButton("Create derived share copy")
         self.play_button = QPushButton("Play")
         self.pause_button = QPushButton("Pause")
         self.previous_button = QPushButton("Previous segment")
@@ -151,6 +164,9 @@ class LibraryPage(QWidget):
             (self.unprotect_button, lambda: self._set_protected(False)),
             (self.folder_button, self._open_folder),
             (self.reverify_button, self._reverify),
+            (self.archive_button, self._queue_archive_selection),
+            (self.move_active_button, self._move_to_active_library),
+            (self.share_copy_button, self._create_share_copy),
             (self.play_button, self._play_selected),
             (self.pause_button, self._player_pause),
             (self.previous_button, lambda: self._step_segment(-1)),
@@ -164,6 +180,9 @@ class LibraryPage(QWidget):
             self.unprotect_button,
             self.folder_button,
             self.reverify_button,
+            self.archive_button,
+            self.move_active_button,
+            self.share_copy_button,
             self.play_button,
             self.pause_button,
             self.previous_button,
@@ -259,6 +278,21 @@ class LibraryPage(QWidget):
         ):
             button.setEnabled(playable)
         self.pause_button.setEnabled(playable)
+        self.archive_button.setEnabled(
+            bool(self._selected_archiveable_ids()) and self._archive_selection_consumer is not None
+        )
+        self.move_active_button.setEnabled(
+            is_media
+            and item is not None
+            and item.media_class == "archive"
+            and self._archive_service is not None
+        )
+        self.share_copy_button.setEnabled(
+            is_media
+            and item is not None
+            and item.validation_state == "verified"
+            and self._archive_service is not None
+        )
         if item is None:
             self.details.clear()
             return
@@ -281,6 +315,44 @@ class LibraryPage(QWidget):
         item = self.model.item_at(self.table.currentIndex())
         if item is not None:
             self._start_action(lambda: self._service.reverify(item.item_id))
+
+    def _queue_archive_selection(self) -> None:  # pragma: no cover - Qt action dispatch
+        if self._archive_selection_consumer is None:
+            return
+        selected = self._selected_archiveable_ids()
+        if not selected:
+            self._failed("Only verified, unprotected originals can be archived")
+            return
+        self._archive_selection_consumer(selected)
+        self.status.setText(f"{len(selected)} original(s) selected for manual archive")
+
+    def _selected_archiveable_ids(self) -> tuple[str, ...]:
+        return tuple(
+            item.item_id
+            for index in self.table.selectionModel().selectedRows()
+            if (item := self.model.item_at(index)) is not None
+            and item.kind == "media"
+            and item.media_class == "original"
+            and not item.protected
+            and item.validation_state == "verified"
+            and item.segment_state in {"verified", "interrupted_verified"}
+        )
+
+    def _move_to_active_library(self) -> None:  # pragma: no cover - Qt action dispatch
+        item = self.model.item_at(self.table.currentIndex())
+        if item is not None and self._archive_service is not None:
+            service = self._archive_service
+            self._start_action(
+                lambda: service.move_to_active_library(item.item_id, self._media_root)
+            )
+
+    def _create_share_copy(self) -> None:  # pragma: no cover - Qt action dispatch
+        item = self.model.item_at(self.table.currentIndex())
+        if item is None or item.file_path is None or self._archive_service is None:
+            return
+        service = self._archive_service
+        destination = self._media_root / "share-copies" / Path(item.file_path).name
+        self._start_action(lambda: service.create_share_copy(item.item_id, destination))
 
     def _start_action(self, action: Callable[[], LibraryItem]) -> None:  # pragma: no cover
         if self._action_thread is not None and self._action_thread.isRunning():

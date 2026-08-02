@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
+from uuid import uuid4
 
-from usb_cctv_recorder.application.dto import LibraryDetails, LibraryFilter, LibraryItem
+from usb_cctv_recorder.application.dto import (
+    ArchiveJobStateView,
+    ArchiveJobView,
+    ArchiveProfileKind,
+    LibraryDetails,
+    LibraryFilter,
+    LibraryItem,
+)
 from usb_cctv_recorder.infrastructure.ffmpeg.verifier import FfprobeVerifier, MediaVerificationError
 from usb_cctv_recorder.infrastructure.storage.checksums import Sha256Service
 
@@ -53,7 +62,8 @@ class SQLiteLibraryCatalogue:
                 self._catalogue.connection.execute("DELETE FROM sessions")
                 if not media_root.is_dir():
                     return 0
-                count = self._rebuild_originals(media_root, protected_paths)
+                archived_sources = self._archive_source_ids(media_root)
+                count = self._rebuild_originals(media_root, protected_paths, archived_sources)
                 count += self._rebuild_quarantine(media_root, protected_paths)
                 count += self._rebuild_archives(media_root, protected_paths)
             return count
@@ -149,7 +159,276 @@ class SQLiteLibraryCatalogue:
                 )
             return self._find_item(item_id)
 
-    def _rebuild_originals(self, root: Path, protected_paths: dict[str, bool]) -> int:
+    def archive_source(self, item_id: str) -> LibraryItem:
+        """Return an eligible original; callers still revalidate it immediately before use."""
+        with self._lock:
+            item = self._find_item(item_id)
+            if (
+                item.kind != "media"
+                or item.media_class != "original"
+                or item.protected
+                or item.validation_state != "verified"
+                or item.segment_state not in {"verified", "interrupted_verified"}
+                or item.file_path is None
+            ):
+                raise LibraryItemNotFoundError("media is ineligible for archiving")
+            return item
+
+    def eligible_original_ids(
+        self, *, session_id: str | None = None, requested_bytes: int | None = None
+    ) -> tuple[str, ...]:
+        """Return only stable, verified, unprotected originals for explicit manual selection."""
+        if requested_bytes is not None and requested_bytes <= 0:
+            raise ValueError("requested free space must be positive")
+        with self._lock:
+            clauses = [
+                "media_class = 'original'",
+                "state IN ('verified', 'interrupted_verified')",
+                "protected = 0",
+                "streams_validated = 1",
+                "error_state IS NULL",
+            ]
+            values: list[object] = []
+            if session_id:
+                clauses.append("session_id = ?")
+                values.append(session_id)
+            rows = self._catalogue.connection.execute(
+                f"SELECT id, file_size_bytes FROM segments WHERE {' AND '.join(clauses)} "  # noqa: S608
+                "ORDER BY started_at, id",
+                values,
+            ).fetchall()
+            selected: list[str] = []
+            recovered = 0
+            for item_id, size in rows:
+                selected.append(str(item_id))
+                recovered += int(size) if isinstance(size, int) else 0
+                if requested_bytes is not None and recovered >= requested_bytes:
+                    break
+            return tuple(selected)
+
+    def create_archive_job(
+        self,
+        job_id: str,
+        source: LibraryItem,
+        destination: Path,
+        work_path: Path,
+        profile: ArchiveProfileKind,
+        delete_source_after_commit: bool,
+    ) -> ArchiveJobView:
+        with self._lock, self._catalogue.transaction():
+            now = _now()
+            self._catalogue.connection.execute(
+                """INSERT INTO archive_jobs(
+                    id, segment_id, state, created_at, updated_at, source_path, destination_path,
+                    work_path, profile, delete_source_after_commit, progress_percent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+                (
+                    job_id,
+                    source.item_id,
+                    ArchiveJobStateView.QUEUED.value,
+                    now,
+                    now,
+                    source.file_path,
+                    str(destination),
+                    str(work_path),
+                    profile.value,
+                    int(delete_source_after_commit),
+                ),
+            )
+            self._catalogue.connection.execute(
+                "UPDATE segments SET state = ?, updated_at = ? WHERE id = ?",
+                ("archive_queued", now, source.item_id),
+            )
+        return self.archive_job(job_id)
+
+    def archive_job(self, job_id: str) -> ArchiveJobView:
+        with self._lock:
+            row = self._catalogue.connection.execute(
+                """SELECT id, segment_id, source_path, destination_path, profile, state,
+                          delete_source_after_commit, progress_percent, failure_code, failure_detail
+                   FROM archive_jobs WHERE id = ?""",
+                (job_id,),
+            ).fetchone()
+            if row is None:
+                raise LibraryItemNotFoundError("archive job does not exist")
+            return _to_archive_job(row)
+
+    def archive_jobs(self) -> tuple[ArchiveJobView, ...]:
+        with self._lock:
+            rows = self._catalogue.connection.execute(
+                """SELECT id, segment_id, source_path, destination_path, profile, state,
+                          delete_source_after_commit, progress_percent, failure_code, failure_detail
+                   FROM archive_jobs ORDER BY created_at, id"""
+            ).fetchall()
+            return tuple(_to_archive_job(row) for row in rows)
+
+    def archive_job_source(self, job_id: str) -> LibraryItem:
+        with self._lock:
+            row = self._catalogue.connection.execute(
+                "SELECT segment_id FROM archive_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise LibraryItemNotFoundError("archive job does not exist")
+            item = self._find_item(str(row[0]))
+            if item.file_path is None or item.protected or item.media_class != "original":
+                raise LibraryItemNotFoundError("archive source is no longer eligible")
+            return item
+
+    def update_archive_job(
+        self,
+        job_id: str,
+        state: ArchiveJobStateView,
+        *,
+        progress_percent: int | None = None,
+        failure_code: str | None = None,
+        failure_detail: str | None = None,
+        restore_source_state: bool = False,
+    ) -> ArchiveJobView:
+        if not 0 <= (progress_percent if progress_percent is not None else 0) <= 100:
+            raise ValueError("archive progress must be between 0 and 100")
+        with self._lock, self._catalogue.transaction():
+            row = self._catalogue.connection.execute(
+                "SELECT segment_id FROM archive_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise LibraryItemNotFoundError("archive job does not exist")
+            values: list[object] = [state.value, _now(), failure_code, failure_detail]
+            assignment = "state = ?, updated_at = ?, failure_code = ?, failure_detail = ?"
+            if progress_percent is not None:
+                assignment += ", progress_percent = ?"
+                values.append(progress_percent)
+            values.append(job_id)
+            self._catalogue.connection.execute(
+                f"UPDATE archive_jobs SET {assignment} WHERE id = ?",
+                values,  # noqa: S608
+            )
+            if restore_source_state:
+                self._catalogue.connection.execute(
+                    """UPDATE segments SET state = CASE WHEN state = 'archive_queued' OR state =
+                       'archiving' OR state = 'archive_validating' THEN 'verified' ELSE state END,
+                       updated_at = ? WHERE id = ?""",
+                    (_now(), row[0]),
+                )
+        return self.archive_job(job_id)
+
+    def commit_archive(
+        self,
+        job_id: str,
+        *,
+        archive_id: str,
+        checksum: str,
+        size: int,
+        duration_seconds: float,
+        video_codec: str | None,
+        audio_codec: str | None,
+        delete_source: bool,
+    ) -> ArchiveJobView:
+        """Commit only already-published, fully decoded archive media."""
+        with self._lock, self._catalogue.transaction():
+            job = self._catalogue.connection.execute(
+                """SELECT segment_id, destination_path FROM archive_jobs WHERE id = ?""", (job_id,)
+            ).fetchone()
+            if job is None:
+                raise LibraryItemNotFoundError("archive job does not exist")
+            source = self._catalogue.connection.execute(
+                "SELECT session_id, started_at FROM segments WHERE id = ?", (job[0],)
+            ).fetchone()
+            if source is None:
+                raise LibraryItemNotFoundError("archive source does not exist")
+            now = _now()
+            self._catalogue.connection.execute(
+                """INSERT INTO segments(
+                    id, session_id, state, media_class, file_path, started_at,
+                    monotonic_duration_seconds, video_codec, audio_codec, streams_validated,
+                    file_size_bytes, sha256, archive_source_segment_id, created_at, updated_at,
+                    archived_at
+                ) VALUES (
+                    ?, ?, 'archived_verified', 'archive', ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?
+                )""",
+                (
+                    archive_id,
+                    source[0],
+                    job[1],
+                    source[1],
+                    duration_seconds,
+                    video_codec,
+                    audio_codec,
+                    size,
+                    checksum,
+                    job[0],
+                    now,
+                    now,
+                    now,
+                ),
+            )
+            self._catalogue.connection.execute(
+                """UPDATE archive_jobs SET state = 'committed', progress_percent = 100,
+                   updated_at = ?, failure_code = NULL, failure_detail = NULL WHERE id = ?""",
+                (now, job_id),
+            )
+            if delete_source:
+                self._catalogue.connection.execute(
+                    """UPDATE segments SET state = 'deleted', deleted_at = ?, updated_at = ?
+                       WHERE id = ?""",
+                    (now, now, job[0]),
+                )
+        return self.archive_job(job_id)
+
+    def mark_source_deleted(self, job_id: str) -> None:
+        """Record a post-commit source deletion; callers must fsync the directory first."""
+        with self._lock, self._catalogue.transaction():
+            row = self._catalogue.connection.execute(
+                "SELECT segment_id FROM archive_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                raise LibraryItemNotFoundError("archive job does not exist")
+            self._catalogue.connection.execute(
+                """UPDATE segments SET state = 'deleted', deleted_at = ?, updated_at = ?
+                   WHERE id = ?""",
+                (_now(), _now(), row[0]),
+            )
+
+    def add_derived_copy(
+        self, source: LibraryItem, destination: Path, checksum: str
+    ) -> LibraryItem:
+        with self._lock, self._catalogue.transaction():
+            item_id = f"share:{uuid4()}"
+            now = _now()
+            self._catalogue.connection.execute(
+                """INSERT INTO segments(
+                    id, session_id, state, media_class, file_path, started_at,
+                    monotonic_duration_seconds, streams_validated, file_size_bytes, sha256,
+                    archive_source_segment_id, created_at, updated_at
+                ) VALUES (?, ?, 'archived_verified', 'share_copy', ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
+                (
+                    item_id,
+                    source.session_id,
+                    str(destination),
+                    source.started_at,
+                    source.duration_seconds,
+                    destination.stat().st_size,
+                    checksum,
+                    source.item_id,
+                    now,
+                    now,
+                ),
+            )
+        return self._find_item(item_id)
+
+    def relocate_archive(self, item_id: str, destination: Path) -> LibraryItem:
+        with self._lock, self._catalogue.transaction():
+            item = self._find_item(item_id)
+            if item.media_class != "archive" or item.file_path is None:
+                raise LibraryItemNotFoundError("only archives can move to the active library")
+            self._catalogue.connection.execute(
+                "UPDATE segments SET file_path = ?, moved_at = ?, updated_at = ? WHERE id = ?",
+                (str(destination), _now(), _now(), item_id),
+            )
+        return self._find_item(item_id)
+
+    def _rebuild_originals(
+        self, root: Path, protected_paths: dict[str, bool], archived_sources: set[str]
+    ) -> int:
         count = 0
         originals = root / "originals"
         if not originals.is_dir():
@@ -170,7 +449,9 @@ class SQLiteLibraryCatalogue:
                     segment.segment_id,
                     str(manifest.session_id),
                     (
-                        "interrupted_verified"
+                        "deleted"
+                        if not path.is_file() and segment.segment_id in archived_sources
+                        else "interrupted_verified"
                         if segment.filename in event_facts.interrupted
                         else "verified"
                     ),
@@ -233,7 +514,13 @@ class SQLiteLibraryCatalogue:
             return 0
         count = 0
         for path in sorted(archives.rglob("*.mkv")):
-            session_id = f"archive:{_derived_id('session', path.parent)}"
+            manifest = _archive_manifest(path)
+            source_id = manifest.get("source_segment_id") if manifest else None
+            session_id = (
+                _session_for_source(self._catalogue.connection, source_id)
+                if isinstance(source_id, str)
+                else None
+            ) or f"archive:{_derived_id('session', path.parent)}"
             self._insert_session_values(session_id, "completed", _now())
             self._insert_segment(
                 _derived_id("archive", path),
@@ -247,6 +534,7 @@ class SQLiteLibraryCatalogue:
                 path.stat().st_size,
                 None,
                 protected_paths,
+                archive_source_segment_id=source_id if isinstance(source_id, str) else None,
             )
             count += 1
         return count
@@ -275,13 +563,14 @@ class SQLiteLibraryCatalogue:
         size: int | None,
         error: str | None,
         protected_paths: dict[str, bool],
+        archive_source_segment_id: str | None = None,
     ) -> None:
         self._catalogue.connection.execute(
             """INSERT INTO segments(
                 id, session_id, state, media_class, file_path, started_at,
                 monotonic_duration_seconds, streams_validated, file_size_bytes, sha256,
-                protected, error_state, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                protected, error_state, created_at, updated_at, archive_source_segment_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 item_id,
                 session_id,
@@ -297,8 +586,21 @@ class SQLiteLibraryCatalogue:
                 error,
                 _now(),
                 _now(),
+                archive_source_segment_id,
             ),
         )
+
+    @staticmethod
+    def _archive_source_ids(root: Path) -> set[str]:
+        archives = root / "archives"
+        if not archives.is_dir():
+            return set()
+        return {
+            str(source_id)
+            for path in archives.rglob("*.archive-manifest.json")
+            if (document := _archive_manifest_path(path)) is not None
+            and isinstance(source_id := document.get("source_segment_id"), str)
+        }
 
     def _insert_gaps(self, session_id: str, recovery_path: Path) -> None:
         try:
@@ -356,7 +658,7 @@ class SQLiteLibraryCatalogue:
                         ELSE 'unverified' END AS validation_state,
                    CASE WHEN has_recording_gap = 1 THEN 'has_gap' ELSE 'none' END AS gap_state,
                    state AS segment_state, error_state
-            FROM segments
+            FROM segments WHERE state != 'deleted'
             UNION ALL
             SELECT id AS item_id, 'gap' AS kind, session_id, 'gap' AS media_class,
                    NULL AS file_path, started_at, duration_seconds, 0 AS protected,
@@ -436,6 +738,27 @@ def _event_facts(path: Path) -> _EventFacts:
     return facts
 
 
+def _archive_manifest(path: Path) -> dict[str, object]:
+    return _archive_manifest_path(path.with_suffix(".archive-manifest.json")) or {}
+
+
+def _archive_manifest_path(path: Path) -> dict[str, object] | None:
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return document if isinstance(document, dict) else None
+
+
+def _session_for_source(connection: sqlite3.Connection, source_id: object) -> str | None:
+    if not isinstance(source_id, str):
+        return None
+    row = connection.execute(
+        "SELECT session_id FROM segments WHERE id = ?", (source_id,)
+    ).fetchone()
+    return str(row[0]) if row is not None else None
+
+
 def _derived_id(prefix: str, path: Path) -> str:
     return f"{prefix}:{hashlib.sha256(str(path).encode()).hexdigest()[:24]}"
 
@@ -450,3 +773,23 @@ def _optional_float(value: object) -> float | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return float(value)
     return None
+
+
+def _to_archive_job(row: tuple[object, ...]) -> ArchiveJobView:
+    try:
+        profile = ArchiveProfileKind(str(row[4]))
+        state = ArchiveJobStateView(str(row[5]))
+    except ValueError as error:
+        raise LibraryItemNotFoundError("archive job has an invalid durable state") from error
+    return ArchiveJobView(
+        job_id=str(row[0]),
+        source_item_id=str(row[1]),
+        source_path=str(row[2] or ""),
+        destination_path=str(row[3] or ""),
+        profile=profile,
+        state=state,
+        delete_source_after_commit=bool(row[6]),
+        progress_percent=int(row[7]) if isinstance(row[7], int | str | bytes | bytearray) else 0,
+        failure_code=str(row[8]) if row[8] is not None else None,
+        failure_detail=str(row[9]) if row[9] is not None else None,
+    )

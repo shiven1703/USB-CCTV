@@ -162,3 +162,71 @@ class LibraryItem:
 class LibraryDetails:
     item: LibraryItem
     facts: tuple[tuple[str, str], ...]
+
+
+class ArchiveProfileKind(StrEnum):
+    """The two evidence-safe archive operations supported in Phase 9."""
+
+    COMPRESSED = "compressed"
+    MOVE = "move"
+
+
+class ArchiveJobStateView(StrEnum):
+    QUEUED = "queued"
+    PRECHECK = "precheck"
+    TRANSCODING = "transcoding"
+    FLUSHING = "flushing"
+    VALIDATING = "validating"
+    PUBLISHING = "publishing"
+    COMMITTED = "committed"
+    PAUSED = "paused"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveProfile:
+    kind: ArchiveProfileKind
+    video_codec: str | None = None
+    video_bitrate_kbit: int = 900
+
+    def __post_init__(self) -> None:
+        if self.kind is ArchiveProfileKind.COMPRESSED:
+            if self.video_codec not in {None, "libx264"} or self.video_bitrate_kbit <= 0:
+                raise ValueError("compressed archives require the verified libx264 profile")
+        elif self.video_codec not in {None, "copy"}:
+            raise ValueError("move archives must copy media without transcoding")
+
+    @property
+    def label(self) -> str:
+        if self.kind is ArchiveProfileKind.MOVE:
+            return "Move without compression (original quality)"
+        return f"Compressed archive (H.264, {self.video_bitrate_kbit} kb/s; audio copied)"
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveRequest:
+    source_item_ids: tuple[str, ...]
+    profile: ArchiveProfile
+    archive_root: str
+    delete_sources_after_commit: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.source_item_ids or any(not item_id for item_id in self.source_item_ids):
+            raise ValueError("at least one archive source is required")
+        if not self.archive_root:
+            raise ValueError("archive destination is required")
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveJobView:
+    job_id: str
+    source_item_id: str
+    source_path: str
+    destination_path: str
+    profile: ArchiveProfileKind
+    state: ArchiveJobStateView
+    delete_source_after_commit: bool
+    progress_percent: int
+    failure_code: str | None
+    failure_detail: str | None
