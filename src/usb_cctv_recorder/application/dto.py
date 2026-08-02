@@ -156,6 +156,7 @@ class LibraryItem:
     gap_state: str
     segment_state: str | None
     error_state: str | None
+    file_size_bytes: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

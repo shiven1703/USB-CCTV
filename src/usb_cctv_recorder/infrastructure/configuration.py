@@ -73,6 +73,11 @@ class WorkerConfigurationStore:
                 "segment_duration_minutes": configuration.segment_duration_minutes,
                 "prevent_suspend": configuration.prevent_suspend,
                 "block_lid_close": configuration.block_lid_close,
+                "configured_storage_cap_bytes": configuration.configured_storage_cap_bytes,
+                "operating_system_reserve_bytes": configuration.operating_system_reserve_bytes,
+                "emergency_finalization_reserve_bytes": (
+                    configuration.emergency_finalization_reserve_bytes
+                ),
             },
             separators=(",", ":"),
             sort_keys=True,
@@ -110,11 +115,34 @@ class WorkerConfigurationStore:
             "segment_duration_minutes",
             "prevent_suspend",
             "block_lid_close",
+            "configured_storage_cap_bytes",
+            "operating_system_reserve_bytes",
+            "emergency_finalization_reserve_bytes",
         }
-        if not isinstance(fields, dict) or set(fields) != expected:
+        legacy = expected - {
+            "configured_storage_cap_bytes",
+            "operating_system_reserve_bytes",
+            "emergency_finalization_reserve_bytes",
+        }
+        if not isinstance(fields, dict) or (set(fields) != expected and set(fields) != legacy):
             raise ValueError("worker recording configuration fields are invalid")
+        if set(fields) == legacy:
+            # Phase 10 migrates the private Phase 9 capture configuration on read.
+            fields = {
+                **fields,
+                "configured_storage_cap_bytes": 90_000_000_000,
+                "operating_system_reserve_bytes": 20_000_000_000,
+                "emergency_finalization_reserve_bytes": 8_000_000_000,
+            }
         string_fields = ("media_root", "camera_identity", "microphone_source")
-        integer_fields = ("width", "height", "segment_duration_minutes")
+        integer_fields = (
+            "width",
+            "height",
+            "segment_duration_minutes",
+            "configured_storage_cap_bytes",
+            "operating_system_reserve_bytes",
+            "emergency_finalization_reserve_bytes",
+        )
         float_fields = ("input_frame_rate", "output_frame_rate")
         boolean_fields = ("prevent_suspend", "block_lid_close")
         if (
@@ -141,4 +169,7 @@ class WorkerConfigurationStore:
             segment_duration_minutes=fields["segment_duration_minutes"],
             prevent_suspend=fields["prevent_suspend"],
             block_lid_close=fields["block_lid_close"],
+            configured_storage_cap_bytes=fields["configured_storage_cap_bytes"],
+            operating_system_reserve_bytes=fields["operating_system_reserve_bytes"],
+            emergency_finalization_reserve_bytes=fields["emergency_finalization_reserve_bytes"],
         )

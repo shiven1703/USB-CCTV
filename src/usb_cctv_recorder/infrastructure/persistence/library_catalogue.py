@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
@@ -205,6 +206,132 @@ class SQLiteLibraryCatalogue:
                 if requested_bytes is not None and recovered >= requested_bytes:
                     break
             return tuple(selected)
+
+    def retention_candidates(self, media_class: str, media_root: Path) -> tuple[LibraryItem, ...]:
+        """Oldest safe derived media only; originals are deliberately never returned."""
+        if media_class not in {"share_copy", "archive"}:
+            raise ValueError("retention can only delete derived share copies or archives")
+        root = media_root.resolve()
+        with self._lock:
+            rows = self._catalogue.connection.execute(
+                """SELECT id, file_path, session_id, media_class, started_at,
+                          monotonic_duration_seconds, protected, state, error_state, file_size_bytes
+                   FROM segments
+                   WHERE media_class = ? AND protected = 0 AND streams_validated = 1
+                     AND error_state IS NULL AND state = 'archived_verified'
+                   ORDER BY started_at, id""",
+                (media_class,),
+            ).fetchall()
+            candidates: list[LibraryItem] = []
+            for row in rows:
+                path = Path(str(row[1]))
+                try:
+                    path.resolve(strict=True).relative_to(root)
+                except (OSError, ValueError):
+                    continue
+                candidates.append(
+                    LibraryItem(
+                        str(row[0]),
+                        "media",
+                        str(row[2]),
+                        str(row[3]),
+                        str(row[1]),
+                        str(row[4]),
+                        _optional_float(row[5]),
+                        bool(row[6]),
+                        "verified",
+                        "none",
+                        str(row[7]),
+                        str(row[8]) if row[8] is not None else None,
+                        _optional_int(row[9]),
+                    )
+                )
+            return tuple(candidates)
+
+    def safe_temporary_paths(self, media_root: Path) -> tuple[Path, ...]:
+        """Return only terminal Phase 9 job work paths after recovery analysis."""
+        root = media_root.resolve()
+        with self._lock:
+            rows = self._catalogue.connection.execute(
+                """SELECT id, work_path, destination_path FROM archive_jobs
+                   WHERE state IN ('committed', 'cancelled', 'failed') AND work_path IS NOT NULL"""
+            ).fetchall()
+            paths: list[Path] = []
+            for row in rows:
+                work = Path(str(row[1]))
+                destination = Path(str(row[2])) if row[2] is not None else None
+                candidates = [work]
+                if destination is not None:
+                    candidates.append(
+                        destination.with_name(f".{destination.name}.{row[0]}.partial")
+                    )
+                for path in candidates:
+                    try:
+                        path.resolve(strict=False).relative_to(root)
+                    except ValueError:
+                        continue
+                    if path.name.endswith(".partial"):
+                        paths.append(path)
+            return tuple(paths)
+
+    def mark_retention_deleted(self, item_id: str) -> None:
+        """Record a deletion only after the governor has safely unlinked the derived file."""
+        with self._lock, self._catalogue.transaction():
+            cursor = self._catalogue.connection.execute(
+                """UPDATE segments SET state = 'deleted', deleted_at = ?, updated_at = ?
+                   WHERE id = ? AND media_class IN ('archive', 'share_copy') AND protected = 0
+                     AND streams_validated = 1 AND error_state IS NULL
+                     AND state = 'archived_verified'""",
+                (_now(), _now(), item_id),
+            )
+            if cursor.rowcount != 1:
+                raise LibraryItemNotFoundError("media is no longer eligible for retention deletion")
+
+    def delete_retention_candidate(
+        self, item_id: str, media_root: Path, delete: Callable[[Path], int]
+    ) -> int:
+        """Keep protection changes and the derived-file unlink in one catalogue lock."""
+        root = media_root.resolve()
+        with self._lock:
+            row = self._catalogue.connection.execute(
+                """SELECT file_path FROM segments WHERE id = ?
+                   AND media_class IN ('archive', 'share_copy') AND protected = 0
+                   AND streams_validated = 1 AND error_state IS NULL
+                   AND state = 'archived_verified'""",
+                (item_id,),
+            ).fetchone()
+            if row is None:
+                return 0
+            path = Path(str(row[0]))
+            try:
+                path.resolve(strict=True).relative_to(root)
+            except (OSError, ValueError):
+                return 0
+            freed = delete(path)
+            if not freed:
+                return 0
+            self.mark_retention_deleted(item_id)
+            return freed
+
+    def measured_storage_rates(self, fallback_original_bytes_per_hour: int) -> tuple[int, int]:
+        """Use closed verified media only; estimates never drive enforcement."""
+        if fallback_original_bytes_per_hour <= 0:
+            raise ValueError("fallback recording rate must be positive")
+        with self._lock:
+            rates: list[int] = []
+            for media_class in ("original", "archive"):
+                row = self._catalogue.connection.execute(
+                    """SELECT COALESCE(SUM(file_size_bytes), 0),
+                              COALESCE(SUM(monotonic_duration_seconds), 0)
+                       FROM segments WHERE media_class = ? AND streams_validated = 1
+                         AND state IN ('verified', 'interrupted_verified', 'archived_verified')""",
+                    (media_class,),
+                ).fetchone()
+                size, duration = (int(row[0]), float(row[1])) if row is not None else (0, 0.0)
+                rates.append(round(size * 3600 / duration) if duration > 0 else 0)
+            original = rates[0] or fallback_original_bytes_per_hour
+            archive = rates[1] or original
+            return original, archive
 
     def create_archive_job(
         self,
@@ -657,13 +784,14 @@ class SQLiteLibraryCatalogue:
                         WHEN streams_validated = 1 THEN 'verified'
                         ELSE 'unverified' END AS validation_state,
                    CASE WHEN has_recording_gap = 1 THEN 'has_gap' ELSE 'none' END AS gap_state,
-                   state AS segment_state, error_state
+                   state AS segment_state, error_state, file_size_bytes
             FROM segments WHERE state != 'deleted'
             UNION ALL
             SELECT id AS item_id, 'gap' AS kind, session_id, 'gap' AS media_class,
                    NULL AS file_path, started_at, duration_seconds, 0 AS protected,
                    'not_applicable' AS validation_state,
-                   'gap' AS gap_state, NULL AS segment_state, reason AS error_state
+                   'gap' AS gap_state, NULL AS segment_state, reason AS error_state,
+                   NULL AS file_size_bytes
             FROM recording_gaps
         """
         clauses: list[str] = []
@@ -709,6 +837,7 @@ class SQLiteLibraryCatalogue:
             gap_state=str(row[9]),
             segment_state=str(row[10]) if row[10] is not None else None,
             error_state=str(row[11]) if row[11] is not None else None,
+            file_size_bytes=_optional_int(row[12]),
         )
 
 
@@ -773,6 +902,10 @@ def _optional_float(value: object) -> float | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return float(value)
     return None
+
+
+def _optional_int(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _to_archive_job(row: tuple[object, ...]) -> ArchiveJobView:

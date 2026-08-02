@@ -10,6 +10,7 @@ import pytest
 
 import usb_cctv_recorder
 from usb_cctv_recorder import __main__, bootstrap
+from usb_cctv_recorder.infrastructure.configuration import XdgPaths
 from usb_cctv_recorder.presentation.qt import app
 from usb_cctv_recorder.presentation.qt.main_window import MainWindow
 
@@ -42,7 +43,9 @@ def test_normal_cli_mode_starts_gui(monkeypatch: pytest.MonkeyPatch) -> None:
     assert __main__.main([]) == 0
 
 
-def test_bootstrap_starts_presentation_application(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_bootstrap_starts_presentation_application(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     received_factory: list[object] = []
 
     def fake_run_application(factory: object) -> int:
@@ -50,6 +53,17 @@ def test_bootstrap_starts_presentation_application(monkeypatch: pytest.MonkeyPat
         return 0
 
     monkeypatch.setattr(bootstrap, "run_application", fake_run_application)
+    monkeypatch.setattr(
+        bootstrap.XdgPaths,
+        "resolve",
+        lambda: XdgPaths(
+            tmp_path / "config",
+            tmp_path / "state",
+            tmp_path / "cache",
+            tmp_path / "runtime",
+            tmp_path / "media",
+        ),
+    )
 
     assert bootstrap.run_gui() == 0
     assert received_factory

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
 from usb_cctv_recorder.application.dto import CaptureMode
+from usb_cctv_recorder.application.storage import StorageGovernorService, StoragePolicy
 from usb_cctv_recorder.domain.states import SessionState
 from usb_cctv_recorder.infrastructure.configuration import WorkerConfigurationStore, XdgPaths
 from usb_cctv_recorder.infrastructure.devices.hotplug import UdevVideoHotplugMonitor
@@ -20,8 +21,12 @@ from usb_cctv_recorder.infrastructure.ffmpeg.command_builder import (
     build_synthetic_recording_command,
 )
 from usb_cctv_recorder.infrastructure.ipc.server import UnixSocketServer
+from usb_cctv_recorder.infrastructure.persistence.library_catalogue import SQLiteLibraryCatalogue
+from usb_cctv_recorder.infrastructure.persistence.sqlite import SQLiteCatalogue
 from usb_cctv_recorder.infrastructure.power.inhibitor import SystemdInhibitAdapter
 from usb_cctv_recorder.infrastructure.power.power_status import LinuxPowerStatusAdapter
+from usb_cctv_recorder.infrastructure.storage.archive_transaction import ArchiveTransactionManager
+from usb_cctv_recorder.infrastructure.storage.governor import FilesystemStorageGovernor
 
 from .recording import HeadlessRecordingController, RecordingFailure
 from .supervisor import WorkerSupervisor
@@ -45,6 +50,43 @@ def run_ipc_worker(
         except AttributeError:
             # Lightweight socket harnesses need only a runtime directory.
             configuration = None
+        storage_service: StorageGovernorService | None = None
+        estimated_segment_bytes = 0
+        if configuration is not None:
+            catalogue = SQLiteLibraryCatalogue(
+                SQLiteCatalogue(runtime_paths.state / "catalogue.sqlite")
+            )
+            archive_manager = ArchiveTransactionManager(catalogue)
+            policy = StoragePolicy(
+                configured_cap_bytes=configuration.configured_storage_cap_bytes,
+                operating_system_reserve_bytes=configuration.operating_system_reserve_bytes,
+                emergency_finalization_reserve_bytes=(
+                    configuration.emergency_finalization_reserve_bytes
+                ),
+            )
+            catalogue_path = runtime_paths.state / "catalogue.sqlite"
+            governor = FilesystemStorageGovernor(
+                configuration.media_root,
+                catalogue,
+                archive_manager,
+                policy,
+                metadata_paths=(
+                    catalogue_path,
+                    catalogue_path.with_name("catalogue.sqlite-wal"),
+                    catalogue_path.with_name("catalogue.sqlite-shm"),
+                ),
+            )
+            archive_manager.set_storage_reserve_checker(
+                lambda required: not governor.ensure_working_reserve(
+                    required, recording_active=False
+                ).remaining_bytes_needed
+            )
+            storage_service = StorageGovernorService(governor)
+            estimated_segment_bytes = round(
+                policy.fallback_original_bytes_per_hour
+                * configuration.segment_duration_minutes
+                / 60
+            )
         active_supervisor = WorkerSupervisor(
             _recording_factory(configuration),
             inhibitor=SystemdInhibitAdapter(),
@@ -53,6 +95,8 @@ def run_ipc_worker(
             block_lid_close=configuration.block_lid_close if configuration is not None else False,
             hotplug_monitor=UdevVideoHotplugMonitor() if configuration is not None else None,
             camera_identity=configuration.camera_identity if configuration is not None else None,
+            storage_governor=storage_service,
+            estimated_segment_bytes=estimated_segment_bytes,
         )
     else:
         active_supervisor = supervisor

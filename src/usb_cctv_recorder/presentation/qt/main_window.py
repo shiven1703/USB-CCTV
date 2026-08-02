@@ -13,6 +13,7 @@ from usb_cctv_recorder.application.dto import DeviceDiscovery
 from usb_cctv_recorder.application.library import LibraryService
 from usb_cctv_recorder.application.ports import WorkerConfigurationPort
 from usb_cctv_recorder.application.preflight import PreflightService
+from usb_cctv_recorder.application.storage import StorageGovernorService
 from usb_cctv_recorder.infrastructure.ipc.client import UnixSocketClient
 from usb_cctv_recorder.infrastructure.ipc.protocol import Command, Request, Response
 
@@ -93,10 +94,15 @@ class MainWindow(QMainWindow):
         library_service: LibraryService | None = None,
         library_media_root: Path | None = None,
         archive_service: ArchiveService | None = None,
+        storage_service: StorageGovernorService | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("USB CCTV Recorder")
-        self.setup_page = SetupPage(preflight_service, worker_configuration=worker_configuration)
+        self.setup_page = SetupPage(
+            preflight_service,
+            worker_configuration=worker_configuration,
+            storage_service=storage_service,
+        )
         self.library_page: LibraryPage | None = None
         self.archive_page: ArchivePage | None = None
         if library_service is None or library_media_root is None or archive_service is None:
@@ -104,7 +110,7 @@ class MainWindow(QMainWindow):
         else:
             tabs = QTabWidget()
             tabs.addTab(self.setup_page, "Setup")
-            self.archive_page = ArchivePage(archive_service, library_media_root)
+            self.archive_page = ArchivePage(archive_service, library_media_root, storage_service)
             self.library_page = LibraryPage(
                 library_service,
                 library_media_root,
@@ -189,4 +195,8 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
+        for thread in (self._worker_status_thread, self._worker_command_thread):
+            if thread is not None and thread.isRunning():
+                thread.requestInterruption()
+                thread.wait(2_000)
         super().closeEvent(event)

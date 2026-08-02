@@ -28,6 +28,7 @@ from usb_cctv_recorder.application.dto import (
     ArchiveProfileKind,
     ArchiveRequest,
 )
+from usb_cctv_recorder.application.storage import StorageDecision, StorageGovernorService
 
 
 class _ArchiveThread(QThread):
@@ -51,10 +52,16 @@ class _ArchiveThread(QThread):
 class ArchivePage(QWidget):
     """Selection, queue controls, progress, and durable failure visibility."""
 
-    def __init__(self, service: ArchiveService, media_root: Path) -> None:
+    def __init__(
+        self,
+        service: ArchiveService,
+        media_root: Path,
+        storage_service: StorageGovernorService | None = None,
+    ) -> None:
         super().__init__()
         self._service = service
         self._thread: _ArchiveThread | None = None
+        self._storage_service = storage_service
         self._selected_ids: tuple[str, ...] = ()
         self.destination = QLineEdit(str(media_root))
         self.session_id = QLineEdit()
@@ -72,7 +79,7 @@ class ArchivePage(QWidget):
         self.selection = QLabel("No originals selected in the Library")
         self.queue_button = QPushButton("Archive selected")
         self.session_button = QPushButton("Select session originals")
-        self.free_space_button = QPushButton("Select oldest until free space")
+        self.free_space_button = QPushButton("Free requested space safely")
         self.run_button = QPushButton("Run next job")
         self.pause_button = QPushButton("Pause")
         self.resume_button = QPushButton("Resume")
@@ -151,7 +158,11 @@ class ArchivePage(QWidget):
 
     def _select_oldest_for_space(self) -> None:  # pragma: no cover - Qt dispatch
         requested_bytes = int(self.free_space_gb.value() * 1_000_000_000)
-        self._start(lambda: self._service.select_oldest_for_space(requested_bytes))
+        if self._storage_service is None:
+            self._start(lambda: self._service.select_oldest_for_space(requested_bytes))
+            return
+        storage_service = self._storage_service
+        self._start(lambda: storage_service.free_bytes(requested_bytes))
 
     def _selected_action(self, action: Callable[[str], ArchiveJobView]) -> None:  # pragma: no cover
         row = self.table.currentRow()
@@ -176,6 +187,14 @@ class ArchivePage(QWidget):
         if isinstance(result, tuple) and all(isinstance(item, str) for item in result):
             self.set_library_selection(result)
             self.status.setText(f"Selected {len(result)} eligible original(s) for manual archive")
+            return
+        if isinstance(result, StorageDecision):
+            self.refresh()
+            actual = sum(action.bytes_affected for action in result.actions)
+            self.status.setText(
+                f"Storage governor recovered {actual / 1_000_000_000:.1f} GB; "
+                f"remaining request {result.remaining_bytes_needed / 1_000_000_000:.1f} GB."
+            )
             return
         self.refresh()
         self.status.setText("Archive operation completed; inspect state and failure details below")

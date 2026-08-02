@@ -191,22 +191,18 @@ class LibraryPage(QWidget):
             actions.addWidget(button)
 
         self.video = QVideoWidget()
-        self.audio = QAudioOutput(self)
-        self.player = QMediaPlayer(self)
-        self.player.setAudioOutput(self.audio)
-        self.player.setVideoOutput(self.video)
-        self.player.errorOccurred.connect(self._playback_error)
-        self.player.mediaStatusChanged.connect(self._media_status_changed)
+        # PulseAudio connection may block while a desktop audio service is unavailable. Playback
+        # is optional, so defer that connection until the user explicitly presses Play.
+        self.audio: QAudioOutput | None = None
+        self.player: QMediaPlayer | None = None
         self.position = QSlider()
         self.position.setOrientation(Qt.Orientation.Horizontal)
-        self.position.sliderMoved.connect(self.player.setPosition)
-        self.player.positionChanged.connect(self.position.setValue)
-        self.player.durationChanged.connect(self.position.setMaximum)
+        self.position.sliderMoved.connect(self._set_position)
         self.volume = QSlider()
         self.volume.setOrientation(Qt.Orientation.Horizontal)
         self.volume.setRange(0, 100)
         self.volume.setValue(100)
-        self.volume.valueChanged.connect(lambda value: self.audio.setVolume(value / 100))
+        self.volume.valueChanged.connect(self._set_volume)
         self.speed = _combo(("0.5×", "1×", "1.5×", "2×"))
         self.speed.setCurrentText("1×")
         self.speed.currentTextChanged.connect(self._set_speed)
@@ -374,21 +370,57 @@ class LibraryPage(QWidget):
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(Path(item.file_path).parent))):
             self._failed("Desktop could not open the containing folder")
 
-    def _play_selected(self) -> None:
+    def _play_selected(self) -> None:  # pragma: no cover - requires a desktop audio backend.
         item = self.model.item_at(self.table.currentIndex())
         if item is None or item.file_path is None:
             return
         if item.validation_state == "diagnostic":
             self._failed(f"Playback unavailable: {item.error_state or 'media has a diagnostic'}")
             return
-        self.player.setSource(QUrl.fromLocalFile(item.file_path))
-        self.player.play()
+        player = self._ensure_player()
+        player.setSource(QUrl.fromLocalFile(item.file_path))
+        player.play()
 
-    def _player_pause(self) -> None:
-        self.player.pause()
+    def _player_pause(self) -> None:  # pragma: no cover - requires a desktop audio backend.
+        if self.player is not None:
+            self.player.pause()
 
-    def _set_speed(self, label: str) -> None:
-        self.player.setPlaybackRate(float(label.removesuffix("×")))
+    def _set_speed(
+        self, label: str
+    ) -> None:  # pragma: no cover - requires a desktop audio backend.
+        if self.player is not None:
+            self.player.setPlaybackRate(float(label.removesuffix("×")))
+
+    def _set_position(
+        self, position: int
+    ) -> None:  # pragma: no cover - requires a desktop audio backend.
+        if self.player is not None:
+            self.player.setPosition(position)
+
+    def _set_volume(
+        self, value: int
+    ) -> None:  # pragma: no cover - requires a desktop audio backend.
+        if self.audio is not None:
+            self.audio.setVolume(value / 100)
+
+    def _ensure_player(
+        self,
+    ) -> QMediaPlayer:  # pragma: no cover - requires a desktop audio backend.
+        if self.player is not None:
+            return self.player
+        audio = QAudioOutput(self)
+        player = QMediaPlayer(self)
+        player.setAudioOutput(audio)
+        player.setVideoOutput(self.video)
+        player.errorOccurred.connect(self._playback_error)
+        player.mediaStatusChanged.connect(self._media_status_changed)
+        player.positionChanged.connect(self.position.setValue)
+        player.durationChanged.connect(self.position.setMaximum)
+        audio.setVolume(self.volume.value() / 100)
+        player.setPlaybackRate(float(self.speed.currentText().removesuffix("×")))
+        self.audio = audio
+        self.player = player
+        return player
 
     def _step_segment(self, direction: int) -> None:  # pragma: no cover - view navigation
         current = self.table.currentIndex().row()
@@ -405,6 +437,8 @@ class LibraryPage(QWidget):
             self._play_selected()
 
     def _playback_error(self, _error: QMediaPlayer.Error, message: str) -> None:
+        if self.player is not None:
+            self.player.stop()
         self._failed(f"Playback failed: {message or 'unsupported or undecodable media'}")
 
     def _media_status_changed(self, status: QMediaPlayer.MediaStatus) -> None:

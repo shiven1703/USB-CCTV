@@ -22,6 +22,7 @@ from usb_cctv_recorder.application.dto import (
     VideoDevice,
 )
 from usb_cctv_recorder.application.preflight import PreflightService
+from usb_cctv_recorder.application.storage import StorageDashboard, StorageUsage
 from usb_cctv_recorder.presentation.qt.pages.setup_page import PreviewTestPort, SetupPage
 from usb_cctv_recorder.presentation.qt.preview import PreviewCallback
 
@@ -194,3 +195,55 @@ def test_discovery_error_is_visible_and_prevents_start(qtbot: pytest.QtBot, tmp_
     )
     assert not page.start_button.isEnabled()
     assert "Camera permission denied." in page.preflight_status.text()
+
+
+def test_storage_dashboard_and_policy_preferences_are_visible_and_worker_persisted(
+    qtbot: pytest.QtBot, tmp_path: Path
+) -> None:
+    saved: list[WorkerRecordingConfiguration] = []
+
+    class WorkerStore:
+        def save(self, configuration: WorkerRecordingConfiguration) -> None:
+            saved.append(configuration)
+
+    class StorageService:
+        def dashboard(self) -> StorageDashboard:
+            return StorageDashboard(
+                StorageUsage(originals_bytes=1_000_000_000),
+                104_200_000_000,
+                76_200_000_000,
+                90_000_000_000,
+                20_000_000_000,
+                8_000_000_000,
+                39_624_000_000,
+                25_146_000_000,
+                3_810_000_000,
+                7_620_000_000,
+                1_650_000_000,
+                900_000_000,
+                13_200_000_000,
+                39_600_000_000,
+                92_400_000_000,
+                3,
+                7,
+            )
+
+    settings = QSettings(str(tmp_path / "preferences.ini"), QSettings.Format.IniFormat)
+    page = SetupPage(
+        PreflightService(StaticDiscovery(fixture_discovery()), WritableStorage()),
+        settings,
+        worker_configuration=WorkerStore(),
+        storage_service=StorageService(),  # type: ignore[arg-type]
+    )
+    qtbot.addWidget(page)
+    page.output_directory.setText(str(tmp_path))
+    page.set_discovery(fixture_discovery())
+    page.storage_cap_gb.setValue(80.0)
+    page.operating_system_reserve_gb.setValue(19.0)
+    page.emergency_reserve_gb.setValue(7.0)
+    page._selection_changed()
+
+    assert "Actual managed usage" in page.storage_dashboard.text()
+    assert saved[-1].configured_storage_cap_bytes == 80_000_000_000
+    assert saved[-1].operating_system_reserve_bytes == 19_000_000_000
+    assert saved[-1].emergency_finalization_reserve_bytes == 7_000_000_000

@@ -47,6 +47,9 @@ class WorkerRecordingConfiguration:
     segment_duration_minutes: int
     prevent_suspend: bool = True
     block_lid_close: bool = False
+    configured_storage_cap_bytes: int = MAX_MANAGED_STORAGE_BYTES
+    operating_system_reserve_bytes: int = DEFAULT_OPERATING_SYSTEM_RESERVE_BYTES
+    emergency_finalization_reserve_bytes: int = DEFAULT_EMERGENCY_FINALIZATION_RESERVE_BYTES
 
     def __post_init__(self) -> None:
         if not self.media_root.is_absolute():
@@ -65,3 +68,10 @@ class WorkerRecordingConfiguration:
             raise ValueError("power protection settings must be boolean")
         if self.block_lid_close and not self.prevent_suspend:
             raise ValueError("lid-close protection requires suspend protection")
+        RecorderConfiguration(
+            self.media_root,
+            self.segment_duration_minutes,
+            self.configured_storage_cap_bytes,
+            self.operating_system_reserve_bytes,
+            self.emergency_finalization_reserve_bytes,
+        )

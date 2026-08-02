@@ -13,6 +13,7 @@ from usb_cctv_recorder.application.dto import (
     PowerStatus,
 )
 from usb_cctv_recorder.application.ports import PowerInhibitorPort, PowerStatusPort
+from usb_cctv_recorder.application.storage import StorageGovernorPort
 from usb_cctv_recorder.domain.states import HealthState, SessionState
 from usb_cctv_recorder.infrastructure.devices.hotplug import (
     UdevVideoHotplugMonitor,
@@ -48,6 +49,8 @@ class WorkerSupervisor:
         video_identity_resolver: Callable[[str], object | None] = resolve_video_identity,
         monotonic: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], datetime] = lambda: datetime.now().astimezone(),
+        storage_governor: StorageGovernorPort | None = None,
+        estimated_segment_bytes: int = 0,
     ) -> None:
         self._recording_factory = recording_factory
         self._controller: HeadlessRecordingController | None = None
@@ -76,6 +79,8 @@ class WorkerSupervisor:
         self._last_good_audio_monotonic: float | None = None
         self._gaps: list[RecoveryGap] = []
         self._recovery_store = RecoveryJournalStore()
+        self._storage_governor = storage_governor
+        self._estimated_segment_bytes = estimated_segment_bytes
 
     @property
     def state(self) -> SessionState:
@@ -117,6 +122,13 @@ class WorkerSupervisor:
         if power.source is PowerSource.CRITICAL_BATTERY:
             self._finalize_active("critical_battery")
             return
+        if self._storage_governor is not None:
+            decision = self._storage_governor.ensure_working_reserve(
+                self._estimated_segment_bytes, recording_active=True
+            )
+            if decision.safe_stop_required:
+                self._finalize_active("critical_storage")
+                return
         if (
             self._prevent_suspend
             and self._inhibitor is not None
@@ -172,6 +184,12 @@ class WorkerSupervisor:
             return self._response(request, False, "recording_configuration_unavailable")
         if self._current_power_status().source is PowerSource.CRITICAL_BATTERY:
             return self._response(request, False, "critical_battery")
+        if self._storage_governor is not None:
+            decision = self._storage_governor.ensure_working_reserve(
+                self._estimated_segment_bytes, recording_active=False
+            )
+            if decision.remaining_bytes_needed:
+                return self._response(request, False, "insufficient_storage_reserve")
         if self._prevent_suspend:
             if self._inhibitor is None:
                 return self._response(request, False, "power_inhibition_unavailable")

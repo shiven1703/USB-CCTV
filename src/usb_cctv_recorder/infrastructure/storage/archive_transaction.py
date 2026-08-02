@@ -119,6 +119,7 @@ class ArchiveTransactionManager:
         copier: CrossFilesystemCopier | None = None,
         transcoder: FfmpegArchiveTranscoder | None = None,
         step_hook: Callable[[str], None] | None = None,
+        storage_reserve_checker: Callable[[int], bool] | None = None,
     ) -> None:
         self._catalogue = catalogue
         self._verifier = verifier or FfprobeVerifier()
@@ -127,6 +128,7 @@ class ArchiveTransactionManager:
         self._copier = copier or CrossFilesystemCopier(self._checksums)
         self._transcoder = transcoder or FfmpegArchiveTranscoder()
         self._step_hook = step_hook or (lambda _step: None)
+        self._storage_reserve_checker = storage_reserve_checker
         self._lock = RLock()
         self._cancelled: dict[str, Event] = {}
 
@@ -157,6 +159,10 @@ class ArchiveTransactionManager:
 
     def jobs(self) -> tuple[ArchiveJobView, ...]:
         return self._catalogue.archive_jobs()
+
+    def set_storage_reserve_checker(self, checker: Callable[[int], bool]) -> None:
+        """Install the Phase 10 check without duplicating its dynamic-cap calculation."""
+        self._storage_reserve_checker = checker
 
     def run_next(self) -> ArchiveJobView | None:
         with self._lock:
@@ -453,6 +459,10 @@ class ArchiveTransactionManager:
             if profile is ArchiveProfileKind.MOVE
             else source.stat().st_size * 2
         )
+        if self._storage_reserve_checker is not None and not self._storage_reserve_checker(
+            required
+        ):
+            raise ArchiveTransactionError("archive working reserve is unavailable")
         available = shutil.disk_usage(destination_directory).free
         if available < required:
             raise ArchiveTransactionError("insufficient archive working space")

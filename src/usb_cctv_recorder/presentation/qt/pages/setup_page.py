@@ -11,6 +11,7 @@ from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -35,6 +36,7 @@ from usb_cctv_recorder.application.dto import (
 )
 from usb_cctv_recorder.application.ports import WorkerConfigurationPort
 from usb_cctv_recorder.application.preflight import PreflightService, SetupSelection
+from usb_cctv_recorder.application.storage import StorageGovernorService
 
 from ..preview import PreviewCallback, QtMultimediaPreview
 
@@ -56,11 +58,13 @@ class SetupPage(QWidget):
         settings: QSettings | None = None,
         preview_factory: Callable[[QVideoWidget], PreviewTestPort] = QtMultimediaPreview,
         worker_configuration: WorkerConfigurationPort | None = None,
+        storage_service: StorageGovernorService | None = None,
     ) -> None:
         super().__init__()
         self._service = service
         self._settings = settings or QSettings("USB CCTV Recorder", "USB CCTV Recorder")
         self._worker_configuration = worker_configuration
+        self._storage_service = storage_service
         self._discovery = DeviceDiscovery((), ())
         self._preview_succeeded = False
         self._preview_failed = False
@@ -83,6 +87,25 @@ class SetupPage(QWidget):
         self.output_directory = QLineEdit(
             str(self._settings.value("output_directory", str(Path.home() / "Videos")))
         )
+        self.storage_cap_gb = QDoubleSpinBox()
+        self.storage_cap_gb.setRange(0.0, 90.0)
+        self.storage_cap_gb.setDecimals(1)
+        self.storage_cap_gb.setSuffix(" GB")
+        self.storage_cap_gb.setValue(float(str(self._settings.value("storage_cap_gb", 90.0))))
+        self.operating_system_reserve_gb = QDoubleSpinBox()
+        self.operating_system_reserve_gb.setRange(0.0, 90.0)
+        self.operating_system_reserve_gb.setDecimals(1)
+        self.operating_system_reserve_gb.setSuffix(" GB")
+        self.operating_system_reserve_gb.setValue(
+            float(str(self._settings.value("operating_system_reserve_gb", 20.0)))
+        )
+        self.emergency_reserve_gb = QDoubleSpinBox()
+        self.emergency_reserve_gb.setRange(0.0, 90.0)
+        self.emergency_reserve_gb.setDecimals(1)
+        self.emergency_reserve_gb.setSuffix(" GB")
+        self.emergency_reserve_gb.setValue(
+            float(str(self._settings.value("emergency_reserve_gb", 8.0)))
+        )
         browse_button = QPushButton("Browse…")
         browse_button.clicked.connect(self._choose_output_directory)
         output_layout = QHBoxLayout()
@@ -92,6 +115,7 @@ class SetupPage(QWidget):
         self.video_preview.setMinimumHeight(180)
         self.microphone_activity = QLabel("Microphone activity: not tested")
         self.storage_estimate = QLabel("Storage estimate: awaiting configuration")
+        self.storage_dashboard = QLabel("Storage dashboard: awaiting managed-root scan")
         self.preflight_status = QLabel(self._preview_message)
         self.test_button = QPushButton("Test camera and microphone")
         self.test_button.clicked.connect(self._run_test)
@@ -107,11 +131,15 @@ class SetupPage(QWidget):
         form.addRow("Power protection", self.prevent_suspend)
         form.addRow("Lid-close protection", self.block_lid_close)
         form.addRow("Recording directory", output_layout)
+        form.addRow("Managed storage cap", self.storage_cap_gb)
+        form.addRow("Operating-system reserve", self.operating_system_reserve_gb)
+        form.addRow("Emergency finalization reserve", self.emergency_reserve_gb)
         layout = QVBoxLayout(self)
         layout.addLayout(form)
         layout.addWidget(self.video_preview)
         layout.addWidget(self.microphone_activity)
         layout.addWidget(self.storage_estimate)
+        layout.addWidget(self.storage_dashboard)
         layout.addWidget(self.preflight_status)
         layout.addWidget(self.test_button)
         layout.addWidget(self.start_button)
@@ -123,6 +151,9 @@ class SetupPage(QWidget):
         self.prevent_suspend.toggled.connect(self._power_protection_changed)
         self.block_lid_close.toggled.connect(self._selection_changed)
         self.output_directory.editingFinished.connect(self._selection_changed)
+        self.storage_cap_gb.valueChanged.connect(self._selection_changed)
+        self.operating_system_reserve_gb.valueChanged.connect(self._selection_changed)
+        self.emergency_reserve_gb.valueChanged.connect(self._selection_changed)
 
     def set_discovery(self, discovery: DeviceDiscovery) -> None:
         self._discovery = discovery
@@ -181,6 +212,11 @@ class SetupPage(QWidget):
         self._settings.setValue("output_directory", self.output_directory.text())
         self._settings.setValue("prevent_suspend", self.prevent_suspend.isChecked())
         self._settings.setValue("block_lid_close", self.block_lid_close.isChecked())
+        self._settings.setValue("storage_cap_gb", self.storage_cap_gb.value())
+        self._settings.setValue(
+            "operating_system_reserve_gb", self.operating_system_reserve_gb.value()
+        )
+        self._settings.setValue("emergency_reserve_gb", self.emergency_reserve_gb.value())
         mode = self._selected_mode()
         if (
             self._worker_configuration is None
@@ -202,18 +238,33 @@ class SetupPage(QWidget):
                     segment_duration_minutes=self.segment_duration.value(),
                     prevent_suspend=self.prevent_suspend.isChecked(),
                     block_lid_close=self.block_lid_close.isChecked(),
+                    configured_storage_cap_bytes=int(self.storage_cap_gb.value() * 1_000_000_000),
+                    operating_system_reserve_bytes=int(
+                        self.operating_system_reserve_gb.value() * 1_000_000_000
+                    ),
+                    emergency_finalization_reserve_bytes=int(
+                        self.emergency_reserve_gb.value() * 1_000_000_000
+                    ),
                 )
             )
         except (OSError, ValueError) as error:
             self.preflight_status.setText(f"Unable to save worker recording settings: {error}")
 
     def _update_preflight(self) -> None:
+        self._update_storage_dashboard()
         if self._service is None:
             return
         try:
             configuration = RecorderConfiguration(
                 media_root=Path(self.output_directory.text()).expanduser(),
                 segment_duration_minutes=self.segment_duration.value(),
+                configured_storage_cap_bytes=int(self.storage_cap_gb.value() * 1_000_000_000),
+                operating_system_reserve_bytes=int(
+                    self.operating_system_reserve_gb.value() * 1_000_000_000
+                ),
+                emergency_finalization_reserve_bytes=int(
+                    self.emergency_reserve_gb.value() * 1_000_000_000
+                ),
             )
         except ValueError:
             self.start_button.setEnabled(False)
@@ -234,6 +285,26 @@ class SetupPage(QWidget):
         if result.storage_estimate is not None:
             self.storage_estimate.setText(result.storage_estimate.message)
         self.preflight_status.setText(_preflight_message(result.errors, self._preview_message))
+
+    def _update_storage_dashboard(self) -> None:
+        if self._storage_service is None:
+            return
+        try:
+            dashboard = self._storage_service.dashboard()
+        except OSError as error:
+            self.storage_dashboard.setText(f"Storage dashboard unavailable: {error}")
+            return
+        usage = dashboard.usage
+        self.storage_dashboard.setText(
+            "Actual managed usage: "
+            f"{usage.total_bytes / 1_000_000_000:.1f} GB; effective cap: "
+            f"{dashboard.effective_cap_bytes / 1_000_000_000:.1f} GB; filesystem free: "
+            f"{dashboard.filesystem_free_bytes / 1_000_000_000:.1f} GB. "
+            "Estimates: next session "
+            f"{dashboard.estimated_next_session_bytes / 1_000_000_000:.1f} GB; "
+            f"original nights {dashboard.estimated_original_nights}; history nights "
+            f"{dashboard.estimated_history_nights}."
+        )
 
     def _run_test(self) -> None:
         camera = self._selected_camera()
