@@ -12,9 +12,9 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           version: 0.12.1
-      - name: Install media and Qt runtime dependencies
+      - name: Install media, Qt, and desktop-entry validation dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends ffmpeg libegl1 libpulse0
+          sudo apt-get install --yes --no-install-recommends desktop-file-utils ffmpeg libegl1 libpulse0
       - run: uv python install 3.12
       - run: make ci
