@@ -17,10 +17,10 @@ run.
 | Capture identity | `/dev/v4l/by-id/usb-BC-250403-J_USB_2.0_Camera_2K_01.00.00-video-index0` |
 | Capture input | MJPEG, 2560x1440, 30 FPS |
 | Microphone source | `alsa_input.usb-BC-250403-J_USB_2.0_Camera_2K_01.00.00-02.mono-fallback` |
-| Package | `dist/usb-cctv-recorder_0.1.0_amd64.deb` (built 2026-08-02T20:10:54+02:00) |
-| Package SHA-256 | `98899b2614482f329fbd643d9e786fe80a3c607605a507e61fabb4fff9a6dc31` |
+| Package | `dist/usb-cctv-recorder_0.1.0_amd64.deb` (final build 2026-08-02T20:19:42+02:00) |
+| Package SHA-256 | `5f845d45e1db0cbb0bd95e2c5956878c08ac39e9fb8cb277f60a3b42e93ec19b` |
 | Automated baseline | `make ci` passed on 2026-08-02; 226 tests, 90.08% coverage; formatting, lint, mypy, audit, package build, and package verification passed |
-| Direct package verification | `UV_CACHE_DIR=/tmp/usb-cctv-uv-cache uv run python scripts/verify_package.py dist/usb-cctv-recorder_0.1.0_amd64.deb` passed 2026-08-02T20:11:03+02:00 |
+| Direct package verification | `UV_CACHE_DIR=/tmp/usb-cctv-uv-cache uv run python scripts/verify_package.py dist/usb-cctv-recorder_0.1.0_amd64.deb` passed 2026-08-02T20:20:30+02:00 |
 
 ## Rules for every run
 
