@@ -9,7 +9,9 @@ from pathlib import Path
 
 from usb_cctv_recorder.application.configuration import WorkerRecordingConfiguration
 from usb_cctv_recorder.application.dto import CaptureMode
+from usb_cctv_recorder.domain.states import SessionState
 from usb_cctv_recorder.infrastructure.configuration import WorkerConfigurationStore, XdgPaths
+from usb_cctv_recorder.infrastructure.devices.hotplug import UdevVideoHotplugMonitor
 from usb_cctv_recorder.infrastructure.ffmpeg.command_builder import (
     CameraCapture,
     FfmpegRecordingCommandBuilder,
@@ -49,6 +51,8 @@ def run_ipc_worker(
             power_status=LinuxPowerStatusAdapter(),
             prevent_suspend=configuration.prevent_suspend if configuration is not None else True,
             block_lid_close=configuration.block_lid_close if configuration is not None else False,
+            hotplug_monitor=UdevVideoHotplugMonitor() if configuration is not None else None,
+            camera_identity=configuration.camera_identity if configuration is not None else None,
         )
     else:
         active_supervisor = supervisor
@@ -93,34 +97,48 @@ def _configured_controller(
     configuration: WorkerRecordingConfiguration,
 ) -> HeadlessRecordingController:
     persistent = Path(configuration.camera_identity)
-    resolved = persistent.resolve(strict=True)
 
-    def command_factory(output_pattern: Path) -> tuple[str, ...]:
-        return FfmpegRecordingCommandBuilder().build(
-            RecordingSettings(
-                camera=CameraCapture(
-                    configuration.camera_identity,
-                    resolved,
-                    CaptureMode(
-                        "MJPG",
-                        "Motion-JPEG",
-                        configuration.width,
-                        configuration.height,
-                        configuration.input_frame_rate,
-                    ),
-                ),
-                microphone_source=configuration.microphone_source,
-                output_profile=OutputProfile(
+    def settings(output_pattern: Path) -> RecordingSettings:
+        # Resolve this selected stable alias for every initial and recovery attempt.
+        resolved = persistent.resolve(strict=True)
+        return RecordingSettings(
+            camera=CameraCapture(
+                configuration.camera_identity,
+                resolved,
+                CaptureMode(
+                    "MJPG",
+                    "Motion-JPEG",
                     configuration.width,
                     configuration.height,
-                    configuration.output_frame_rate,
+                    configuration.input_frame_rate,
                 ),
-                segment_seconds=configuration.segment_duration_minutes * 60,
-                output_pattern=output_pattern,
-            )
+            ),
+            microphone_source=configuration.microphone_source,
+            output_profile=OutputProfile(
+                configuration.width,
+                configuration.height,
+                configuration.output_frame_rate,
+            ),
+            segment_seconds=configuration.segment_duration_minutes * 60,
+            output_pattern=output_pattern,
         )
 
-    return HeadlessRecordingController(configuration.media_root, command_factory)
+    def command_factory(output_pattern: Path) -> tuple[str, ...]:
+        return FfmpegRecordingCommandBuilder().build(settings(output_pattern))
+
+    builder = FfmpegRecordingCommandBuilder()
+    return HeadlessRecordingController(
+        configuration.media_root,
+        command_factory,
+        emergency_command_factories={
+            SessionState.RECORDING_AUDIO_ONLY: lambda output: builder.build_for_streams(
+                settings(output), include_video=False, include_audio=True
+            ),
+            SessionState.RECORDING_VIDEO_ONLY: lambda output: builder.build_for_streams(
+                settings(output), include_video=True, include_audio=False
+            ),
+        },
+    )
 
 
 def run_worker(

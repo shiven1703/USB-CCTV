@@ -102,6 +102,18 @@ def test_protocol_rejects_invalid_response_fields() -> None:
         decode(len(payload).to_bytes(4, "big") + payload)
 
     value = Response(Command.STATUS, str(uuid.uuid4()), "idle", True).to_mapping()
+    value["recovery_attempt"] = -1
+    payload = json.dumps(value).encode()
+    with pytest.raises(ProtocolError, match="recovery_attempt"):
+        decode(len(payload).to_bytes(4, "big") + payload)
+
+    value = Response(Command.STATUS, str(uuid.uuid4()), "idle", True).to_mapping()
+    value["retry_in_seconds"] = -1
+    payload = json.dumps(value).encode()
+    with pytest.raises(ProtocolError, match="retry_in_seconds"):
+        decode(len(payload).to_bytes(4, "big") + payload)
+
+    value = Response(Command.STATUS, str(uuid.uuid4()), "idle", True).to_mapping()
     value["state"] = ""
     payload = json.dumps(value).encode()
     with pytest.raises(ProtocolError, match="state"):
@@ -243,7 +255,7 @@ def test_worker_retry_and_process_crash_state() -> None:
     supervisor = WorkerSupervisor(lambda: crashed)  # type: ignore[arg-type]
     supervisor.handle(_request(Command.START))
     supervisor.poll()
-    assert supervisor.state is SessionState.FAILED
+    assert supervisor.state is SessionState.RECOVERING
 
 
 def test_worker_rejects_incompatible_duplicate_command_id() -> None:
